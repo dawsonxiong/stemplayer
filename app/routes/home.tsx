@@ -2,9 +2,11 @@ import type { Route } from "./+types/home";
 import { useCallback } from "react";
 import { Device } from "~/components/device/Device";
 import { TransportBar } from "~/components/transport/TransportBar";
+import { EffectsPanel } from "~/components/effects/EffectsPanel";
 import { UploadZone } from "~/components/upload/UploadZone";
 import { UploadProgress } from "~/components/upload/UploadProgress";
 import { useAudioEngine } from "~/hooks/useAudioEngine";
+import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
 import { usePlayerStore } from "~/lib/store";
 import {
   requestUploadUrl,
@@ -30,6 +32,8 @@ export default function Home() {
   const status = usePlayerStore((s) => s.status);
   const trackTitle = usePlayerStore((s) => s.trackTitle);
   const errorMessage = usePlayerStore((s) => s.errorMessage);
+
+  useKeyboardShortcuts(audioEngine);
 
   const handleFileSelected = useCallback(
     async (file: File) => {
@@ -106,6 +110,11 @@ export default function Home() {
         <TransportBar audioEngine={audioEngine} />
       </div>
 
+      {/* Effects */}
+      <div className="mt-3 w-full max-w-sm">
+        <EffectsPanel audioEngine={audioEngine} />
+      </div>
+
       {/* Upload progress */}
       <div className="mt-4 w-full max-w-sm">
         <UploadProgress />
@@ -122,6 +131,14 @@ export default function Home() {
           <p className="rounded-lg bg-red-500/10 px-4 py-2 text-center text-sm text-red-400">
             {errorMessage}
           </p>
+        </div>
+      )}
+
+      {/* Keyboard shortcuts hint */}
+      {status === "ready" && (
+        <div className="mt-6 text-center text-[10px] text-[var(--color-text-muted)]">
+          Space: play/pause &middot; 1-4: toggle stems &middot; E: effects
+          &middot; &larr;&rarr;: seek
         </div>
       )}
     </div>

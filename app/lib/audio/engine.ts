@@ -1,4 +1,6 @@
 import type { StemName } from "../constants";
+import { EffectsChain } from "./effects";
+import { MixRecorder } from "./recorder";
 
 interface StemNode {
   audio: HTMLAudioElement;
@@ -11,6 +13,8 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private stems: Map<StemName, StemNode> = new Map();
   private masterGain: GainNode | null = null;
+  private _effects: EffectsChain | null = null;
+  private _recorder: MixRecorder | null = null;
 
   private getContext(): AudioContext {
     if (!this.ctx) {
@@ -22,10 +26,10 @@ export class AudioEngine {
   }
 
   async loadStems(urls: Record<string, string>): Promise<void> {
-    // Clean up any existing stems
     this.dispose();
 
     const ctx = this.getContext();
+    this._effects = new EffectsChain(ctx);
 
     const entries = await Promise.all(
       Object.entries(urls).map(async ([name, url]) => {
@@ -57,8 +61,14 @@ export class AudioEngine {
       gain.connect(analyser);
       analyser.connect(this.masterGain!);
 
+      // Insert effects chain between gain and analyser
+      this._effects.createChain(name, gain, analyser);
+
       this.stems.set(name, { audio, source, gain, analyser });
     }
+
+    // Set up recorder on master output
+    this._recorder = new MixRecorder(ctx, this.masterGain!);
   }
 
   play(): void {
@@ -105,6 +115,14 @@ export class AudioEngine {
     return data;
   }
 
+  get effects(): EffectsChain | null {
+    return this._effects;
+  }
+
+  get recorder(): MixRecorder | null {
+    return this._recorder;
+  }
+
   get currentTime(): number {
     const first = this.stems.values().next().value;
     return first?.audio.currentTime ?? 0;
@@ -129,6 +147,9 @@ export class AudioEngine {
   }
 
   dispose(): void {
+    this._effects?.dispose();
+    this._effects = null;
+    this._recorder = null;
     for (const [, stem] of this.stems) {
       stem.audio.pause();
       stem.audio.src = "";
