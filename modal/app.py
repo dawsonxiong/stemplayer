@@ -14,6 +14,7 @@ demucs_image = (
         "torchaudio==2.3.1",
         "boto3==1.34.0",
         "requests==2.31.0",
+        "fastapi[standard]",
     )
     # Pre-download model weights into the image
     .run_commands(
@@ -26,12 +27,11 @@ demucs_image = (
     image=demucs_image,
     gpu="T4",
     timeout=300,
-    container_idle_timeout=300,
+    scaledown_window=300,
     memory=8192,
-    retries=1,
     secrets=[modal.Secret.from_name("r2-creds")],
 )
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def separate_api(item: dict):
     """
     Called by Cloudflare Worker to trigger stem separation.
