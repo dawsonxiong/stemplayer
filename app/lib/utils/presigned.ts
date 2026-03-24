@@ -30,8 +30,7 @@ export async function generatePresignedUrl({
 
   const signed = await r2.sign(new Request(url, { method, headers }), {
     aws: { signQuery: true },
-    expiresIn,
-  });
+  } as any);
 
   return signed.url;
 }

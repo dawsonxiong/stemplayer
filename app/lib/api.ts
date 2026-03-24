@@ -11,7 +11,7 @@ export async function requestUploadUrl(file: File) {
     }),
   });
   if (!res.ok) {
-    const err = await res.json();
+    const err = (await res.json()) as { error?: string };
     throw new Error(err.error || "Upload request failed");
   }
   return res.json() as Promise<{ taskId: string; uploadUrl: string }>;
@@ -48,21 +48,28 @@ export async function triggerSeparation(taskId: string) {
     body: JSON.stringify({ taskId }),
   });
   if (!res.ok) {
-    const err = await res.json();
+    const err = (await res.json()) as { error?: string };
     throw new Error(err.error || "Failed to start separation");
   }
   return res.json();
 }
 
+interface JobStatus {
+  status: "uploaded" | "processing" | "ready" | "error";
+  progress?: number;
+  error?: string;
+  stems?: Record<string, string>;
+}
+
 export function pollStatus(
   taskId: string,
   onProgress?: (progress: number) => void
-): Promise<any> {
+): Promise<JobStatus> {
   return new Promise((resolve, reject) => {
     const interval = setInterval(async () => {
       try {
         const res = await fetch(`/api/status/${taskId}`);
-        const data = await res.json();
+        const data = (await res.json()) as JobStatus;
 
         if (data.status === "ready") {
           clearInterval(interval);
