@@ -19,18 +19,19 @@ export function Slider({ stemName, audioEngine, amplitude }: SliderProps) {
     useSliderDrag(stemName, audioEngine, sliderRef);
 
   const fillHeight = volume * 100;
-  const glowIntensity = 8 + amplitude * 24;
+  const glowIntensity = 6 + amplitude * 20;
   const brightness = 1 + amplitude * 0.4;
 
   return (
-    <div className="flex flex-col items-center gap-1.5">
+    <div className="flex flex-col items-center gap-2">
       <div
         ref={sliderRef}
-        className="relative w-3 cursor-pointer overflow-hidden rounded-full select-none"
+        className="relative w-2.5 cursor-pointer overflow-hidden rounded-full select-none"
         style={{
-          height: "140px",
-          backgroundColor: "rgba(0,0,0,0.4)",
+          height: "100px",
+          backgroundColor: "rgba(255,255,255,0.04)",
           touchAction: "none",
+          border: "1px solid rgba(255,255,255,0.06)",
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -39,30 +40,20 @@ export function Slider({ stemName, audioEngine, amplitude }: SliderProps) {
       >
         {/* LED fill */}
         <div
-          className="absolute bottom-0 left-0 w-full rounded-full transition-[height] duration-[16ms]"
+          className="absolute bottom-0 left-0 w-full rounded-full"
           style={{
             height: `${fillHeight}%`,
             backgroundColor: stem.colour,
             filter: `brightness(${brightness})`,
-            boxShadow: `0 0 ${glowIntensity}px ${stem.colour}, inset 0 0 ${glowIntensity / 2}px rgba(255,255,255,0.15)`,
-          }}
-        />
-
-        {/* Slider knob indicator */}
-        <div
-          className="absolute left-1/2 h-1 w-5 -translate-x-1/2 rounded-full"
-          style={{
-            bottom: `calc(${fillHeight}% - 2px)`,
-            backgroundColor: stem.colourLight,
-            boxShadow: `0 0 6px ${stem.colour}`,
-            opacity: volume > 0.02 ? 1 : 0,
+            boxShadow: `0 0 ${glowIntensity}px ${stem.colour}`,
+            transition: "height 16ms linear",
           }}
         />
       </div>
 
       <span
-        className="text-[10px] font-medium uppercase tracking-wider"
-        style={{ color: stem.colour }}
+        className="text-[9px] font-medium uppercase tracking-widest"
+        style={{ color: volume > 0.02 ? stem.colour : "var(--color-text-muted)" }}
       >
         {stem.label}
       </span>

@@ -1,5 +1,6 @@
 # Plan (internal reference only)
 PLAN.md
+.mcp.json
 
 # Dependencies
 node_modules/

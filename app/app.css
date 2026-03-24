@@ -5,15 +5,18 @@
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --font-mono: "JetBrains Mono", "Geist Mono", ui-monospace, monospace;
 
-  --color-bg-primary: #0A0A0A;
-  --color-bg-secondary: #141414;
+  --color-bg-primary: #080808;
+  --color-bg-secondary: #111111;
+  --color-bg-surface: #1A1814;
   --color-text-primary: #F5F0E8;
   --color-text-secondary: #8A8478;
+  --color-text-muted: #5A544C;
   --color-device-body: #D4C5A9;
   --color-stem-vocals: #F5A623;
   --color-stem-drums: #E74C3C;
   --color-stem-bass: #3498DB;
   --color-stem-other: #2ECC71;
+  --color-border: rgba(255, 255, 255, 0.06);
 }
 
 html,
@@ -21,8 +24,39 @@ body {
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Subtle radial glow behind the device */
+body::before {
+  content: "";
+  position: fixed;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(
+    circle,
+    rgba(212, 197, 169, 0.04) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 0;
 }
 
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
 }

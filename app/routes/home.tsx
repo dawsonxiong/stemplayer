@@ -38,7 +38,6 @@ export default function Home() {
       store.setTrackTitle(file.name.replace(/\.[^.]+$/, ""));
 
       try {
-        // Upload
         store.setStatus("uploading");
         const { taskId, uploadUrl } = await requestUploadUrl(file);
         store.setTaskId(taskId);
@@ -47,7 +46,6 @@ export default function Home() {
           store.setProcessingProgress(progress);
         });
 
-        // Separate
         store.setStatus("processing");
         store.setProcessingProgress(0);
         await triggerSeparation(taskId);
@@ -56,7 +54,6 @@ export default function Home() {
           store.setProcessingProgress(progress);
         });
 
-        // Load stems
         const { stems } = await fetchStemUrls(taskId);
         await audioEngine?.loadStems(stems);
 
@@ -74,38 +71,58 @@ export default function Home() {
   );
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-6 p-4">
-      {/* Track title */}
-      {trackTitle && status === "ready" && (
-        <h1 className="max-w-md truncate text-center text-lg font-semibold text-[var(--color-text-primary)]">
-          {trackTitle}
-        </h1>
-      )}
-
-      {/* Logo / title when idle */}
-      {(status === "idle" || status === "error") && (
-        <h1 className="text-2xl font-bold tracking-tight text-[var(--color-text-primary)]">
-          Stem Player
-        </h1>
-      )}
+    <div className="relative z-10 flex min-h-screen flex-col items-center justify-center px-4 py-8">
+      {/* Header */}
+      <header className="mb-2">
+        {trackTitle && status === "ready" ? (
+          <h1 className="max-w-md truncate text-center text-base font-medium tracking-wide text-[var(--color-text-primary)]">
+            {trackTitle}
+          </h1>
+        ) : status === "uploading" ? (
+          <h1 className="text-center text-sm text-[var(--color-text-secondary)]">
+            Uploading...
+          </h1>
+        ) : status === "processing" ? (
+          <h1 className="text-center text-sm text-[var(--color-text-secondary)]">
+            Separating stems...
+          </h1>
+        ) : (
+          <div className="flex flex-col items-center gap-1">
+            <h1 className="text-xl font-semibold tracking-tight text-[var(--color-text-primary)]">
+              Stem Player
+            </h1>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Upload a track to begin
+            </p>
+          </div>
+        )}
+      </header>
 
       {/* Device */}
       <Device audioEngine={audioEngine} />
 
       {/* Transport */}
-      <TransportBar audioEngine={audioEngine} />
+      <div className="mt-2 w-full max-w-sm">
+        <TransportBar audioEngine={audioEngine} />
+      </div>
 
       {/* Upload progress */}
-      <UploadProgress />
+      <div className="mt-4 w-full max-w-sm">
+        <UploadProgress />
+      </div>
 
       {/* Upload zone */}
-      <UploadZone onFileSelected={handleFileSelected} />
+      <div className="mt-4 w-full max-w-sm">
+        <UploadZone onFileSelected={handleFileSelected} />
+      </div>
 
-      {/* Error message */}
+      {/* Error */}
       {status === "error" && errorMessage && (
-        <p className="max-w-md text-center text-sm text-red-400">
-          {errorMessage}
-        </p>
+        <div className="mt-4 w-full max-w-sm">
+          <p className="rounded-lg bg-red-500/10 px-4 py-2 text-center text-sm text-red-400">
+            {errorMessage}
+          </p>
+        </div>
       )}
     </div>
   );
