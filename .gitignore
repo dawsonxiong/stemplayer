@@ -1,0 +1,50 @@
+# Plan (internal reference only)
+PLAN.md
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+build/
+dist/
+.cache/
+*.tsbuildinfo
+
+# React Router
+/.react-router/
+
+# Cloudflare
+.mf
+.wrangler/
+.dev.vars*
+worker-configuration.d.ts
+
+# Environment
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python (Modal)
+modal/__pycache__/
+modal/*.pyc
+.venv/
+__pycache__/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Testing
+coverage/

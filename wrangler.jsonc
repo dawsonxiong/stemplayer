@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "stemplayer",
+  "compatibility_date": "2026-03-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "./workers/app.ts",
+
+  // R2 bucket for audio files (uploads + stems)
+  "r2_buckets": [
+    {
+      "binding": "AUDIO_BUCKET",
+      "bucket_name": "stem-player-audio"
+    }
+  ],
+
+  // KV namespace for job status tracking
+  "kv_namespaces": [
+    {
+      "binding": "JOBS",
+      "id": "<your-kv-namespace-id>"
+    }
+  ],
+
+  "vars": {
+    "MODAL_ENDPOINT": "https://<your-workspace>--stem-demucs-separate-api.modal.run",
+    "R2_PUBLIC_ENDPOINT": "https://<account-id>.r2.cloudflarestorage.com"
+  }
+
+  // Secrets (set via: npx wrangler secret put <NAME>):
+  // - R2_ACCESS_KEY_ID
+  // - R2_SECRET_ACCESS_KEY
+  // - WEBHOOK_SECRET
+}
