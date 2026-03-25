@@ -167,21 +167,21 @@ function Device({ volumes, amplitudes }: Props) {
   );
 }
 
-// ── Speaker grille — recessed oval with honeycomb holes ──
+// ── Speaker grille — recessed oval cavity with hole grid ──
 function SpeakerGrille() {
   const angle = Math.PI * 0.5;
-  const edgeDist = A * 0.93;
+  const edgeDist = A * 0.95;
   const gY = B * 0.28;
 
   // Honeycomb hole positions (4 rows, staggered)
   const holes: [number, number][] = [];
   for (let row = -1.5; row <= 1.5; row++) {
     const cols = Math.abs(row) <= 0.5 ? 5 : 4;
-    const xOff = Math.abs(row) <= 0.5 ? 0 : 0.009;
+    const xOff = Math.abs(row) <= 0.5 ? 0 : 0.007;
     for (let col = 0; col < cols; col++) {
       holes.push([
-        (col - (cols - 1) / 2) * 0.018 + xOff,
-        row * 0.015,
+        (col - (cols - 1) / 2) * 0.014 + xOff,
+        row * 0.013,
       ]);
     }
   }
@@ -191,50 +191,105 @@ function SpeakerGrille() {
       position={[Math.sin(angle) * edgeDist, gY, Math.cos(angle) * edgeDist]}
       rotation={[0, -angle + Math.PI / 2, 0]}
     >
-      {/* Recessed oval surround */}
-      <mesh rotation={[0, Math.PI / 2, 0]}>
-        <cylinderGeometry args={[0.06, 0.06, 0.03, 16]} />
-        <meshStandardMaterial color="#B09888" roughness={0.95} />
+      {/* Recessed oval back plate */}
+      <mesh position={[0, 0, 0.006]} rotation={[0, 0, 0]}>
+        <circleGeometry args={[0.045, 20]} />
+        <meshStandardMaterial color="#9A8A7A" roughness={0.95} />
       </mesh>
 
-      {/* Holes */}
+      {/* Rim around the grille recess */}
+      <mesh position={[0, 0, -0.001]}>
+        <ringGeometry args={[0.043, 0.052, 20]} />
+        <meshStandardMaterial color="#B8A898" roughness={0.92} />
+      </mesh>
+
+      {/* Speaker holes — dark circles on the back plate */}
       {holes.map(([x, y], i) => (
-        <mesh key={i} position={[x, y, 0]} rotation={[0, Math.PI / 2, 0]}>
-          <cylinderGeometry args={[0.005, 0.005, 0.04, 6]} />
-          <meshStandardMaterial color="#7A6A5A" roughness={0.95} />
-        </mesh>
+        <group key={i}>
+          {/* Hole — dark */}
+          <mesh position={[x, y, 0.005]}>
+            <circleGeometry args={[0.004, 8]} />
+            <meshStandardMaterial color="#3A3028" roughness={0.6} />
+          </mesh>
+          {/* Hole rim */}
+          <mesh position={[x, y, 0.0055]}>
+            <ringGeometry args={[0.004, 0.0055, 8]} />
+            <meshStandardMaterial color="#8A7A6A" roughness={0.9} />
+          </mesh>
+        </group>
       ))}
     </group>
   );
 }
 
-// ── Port cutout — recessed shelf with USB-C + 3.5mm ──────
+// ── Port cutout — recessed cavity with USB-C + 3.5mm ─────
 function PortCutouts() {
   const angle = -Math.PI * 0.5;
-  const edgeDist = A * 0.93;
-  const pY = -B * 0.25;
+  const edgeDist = A * 0.95;
+  const pY = -B * 0.2;
+
+  // Dark interior material for the recessed cavity
+  const cavityColor = "#8A7A6A";
+  const holeColor = "#2A2420";
 
   return (
     <group
       position={[Math.sin(angle) * edgeDist, pY, Math.cos(angle) * edgeDist]}
       rotation={[0, -angle + Math.PI / 2, 0]}
     >
-      {/* Recessed port shelf */}
-      <mesh rotation={[0, Math.PI / 2, 0]}>
-        <boxGeometry args={[0.06, 0.08, 0.03]} />
-        <meshStandardMaterial color="#B09888" roughness={0.95} />
+      {/* Recessed cavity — rounded rectangle carved into the edge */}
+      {/* Back wall */}
+      <mesh position={[0, 0, 0.008]} rotation={[0, 0, 0]}>
+        <planeGeometry args={[0.055, 0.075]} />
+        <meshStandardMaterial color={cavityColor} roughness={0.95} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Top wall */}
+      <mesh position={[0, 0.0375, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.055, 0.016]} />
+        <meshStandardMaterial color={cavityColor} roughness={0.95} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Bottom wall */}
+      <mesh position={[0, -0.0375, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[0.055, 0.016]} />
+        <meshStandardMaterial color={cavityColor} roughness={0.95} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Left wall */}
+      <mesh position={[-0.0275, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <planeGeometry args={[0.016, 0.075]} />
+        <meshStandardMaterial color={cavityColor} roughness={0.95} side={THREE.DoubleSide} />
+      </mesh>
+      {/* Right wall */}
+      <mesh position={[0.0275, 0, 0]} rotation={[0, -Math.PI / 2, 0]}>
+        <planeGeometry args={[0.016, 0.075]} />
+        <meshStandardMaterial color={cavityColor} roughness={0.95} side={THREE.DoubleSide} />
       </mesh>
 
-      {/* 3.5mm headphone jack — round hole */}
-      <mesh position={[0, 0.018, 0]} rotation={[0, Math.PI / 2, 0]}>
-        <cylinderGeometry args={[0.008, 0.008, 0.04, 10]} />
-        <meshStandardMaterial color="#4A4038" roughness={0.8} />
+      {/* 3.5mm headphone jack — dark circle on back wall */}
+      <mesh position={[0, 0.016, 0.007]}>
+        <circleGeometry args={[0.009, 16]} />
+        <meshStandardMaterial color={holeColor} roughness={0.5} />
+      </mesh>
+      {/* Jack rim ring */}
+      <mesh position={[0, 0.016, 0.0075]}>
+        <ringGeometry args={[0.009, 0.012, 16]} />
+        <meshStandardMaterial color="#6A5A4A" roughness={0.7} />
       </mesh>
 
-      {/* USB-C port — rectangular */}
-      <mesh position={[0, -0.018, 0]} rotation={[0, Math.PI / 2, 0]}>
-        <boxGeometry args={[0.02, 0.008, 0.04]} />
-        <meshStandardMaterial color="#4A4038" roughness={0.8} />
+      {/* USB-C port — dark rounded rectangle on back wall */}
+      <mesh position={[0, -0.016, 0.007]}>
+        <planeGeometry args={[0.024, 0.01]} />
+        <meshStandardMaterial color={holeColor} roughness={0.5} />
+      </mesh>
+      {/* USB-C rim */}
+      <mesh position={[0, -0.016, 0.0072]}>
+        <planeGeometry args={[0.028, 0.014]} />
+        <meshStandardMaterial color="#6A5A4A" roughness={0.7} />
+      </mesh>
+
+      {/* Lip/edge around the entire cavity opening — body-colored border */}
+      <mesh position={[0, 0, -0.001]}>
+        <ringGeometry args={[0.038, 0.045, 4]} />
+        <meshStandardMaterial color="#C0A690" roughness={0.9} transparent opacity={0.5} />
       </mesh>
     </group>
   );
