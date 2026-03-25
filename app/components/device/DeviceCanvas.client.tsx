@@ -81,7 +81,9 @@ export default function DeviceCanvas({ volumes, amplitudes }: Props) {
         <OrbitControls
           makeDefault
           enablePan={false}
-          enableZoom={false}
+          enableZoom={true}
+          minDistance={2.0}
+          maxDistance={7.0}
           minPolarAngle={0.1}
           maxPolarAngle={Math.PI - 0.1}
           autoRotate
@@ -156,109 +158,185 @@ function Device({ volumes, amplitudes }: Props) {
         <Arm key={stem} stem={stem} rot={rot} vol={volumes[stem]} amp={amplitudes[stem]} />
       ))}
 
-      {/* Hardware details on the edge */}
+      {/* Hardware details */}
       <SpeakerGrille />
       <PortCutouts />
       <SideButtons />
+      <BottomText />
     </group>
   );
 }
 
-// ── Speaker grille (oval array of holes on the edge) ─────
+// ── Speaker grille — recessed oval with honeycomb holes ──
 function SpeakerGrille() {
-  // Position on the side, roughly opposite the ports
-  const grillAngle = Math.PI * 0.5; // right side
-  const holes: [number, number][] = [];
+  const angle = Math.PI * 0.5;
+  const edgeDist = A * 0.93;
+  const gY = B * 0.28;
 
-  // 3 rows x 4-5 columns oval pattern — small holes
-  for (let row = -1; row <= 1; row++) {
-    const cols = row === 0 ? 5 : 4;
-    const off = row === 0 ? 0 : 0.008;
+  // Honeycomb hole positions (4 rows, staggered)
+  const holes: [number, number][] = [];
+  for (let row = -1.5; row <= 1.5; row++) {
+    const cols = Math.abs(row) <= 0.5 ? 5 : 4;
+    const xOff = Math.abs(row) <= 0.5 ? 0 : 0.009;
     for (let col = 0; col < cols; col++) {
-      const x = (col - (cols - 1) / 2) * 0.018 + off;
-      const y = row * 0.018;
-      holes.push([x, y]);
+      holes.push([
+        (col - (cols - 1) / 2) * 0.018 + xOff,
+        row * 0.015,
+      ]);
     }
   }
 
   return (
     <group
-      position={[
-        Math.sin(grillAngle) * A * 0.94,
-        B * 0.25,
-        Math.cos(grillAngle) * A * 0.94,
-      ]}
-      rotation={[0, -grillAngle + Math.PI / 2, 0]}
+      position={[Math.sin(angle) * edgeDist, gY, Math.cos(angle) * edgeDist]}
+      rotation={[0, -angle + Math.PI / 2, 0]}
     >
+      {/* Recessed oval surround */}
+      <mesh rotation={[0, Math.PI / 2, 0]}>
+        <cylinderGeometry args={[0.06, 0.06, 0.03, 16]} />
+        <meshStandardMaterial color="#B09888" roughness={0.95} />
+      </mesh>
+
+      {/* Holes */}
       {holes.map(([x, y], i) => (
         <mesh key={i} position={[x, y, 0]} rotation={[0, Math.PI / 2, 0]}>
-          <cylinderGeometry args={[0.006, 0.006, 0.025, 6]} />
-          <meshStandardMaterial color="#9A8878" roughness={0.95} />
+          <cylinderGeometry args={[0.005, 0.005, 0.04, 6]} />
+          <meshStandardMaterial color="#7A6A5A" roughness={0.95} />
         </mesh>
       ))}
     </group>
   );
 }
 
-// ── USB-C + 3.5mm jack on the bottom edge ────────────────
+// ── Port cutout — recessed shelf with USB-C + 3.5mm ──────
 function PortCutouts() {
-  const portAngle = -Math.PI * 0.5; // left side (opposite speaker)
-  const edgeX = Math.sin(portAngle) * A * 0.96;
-  const edgeZ = Math.cos(portAngle) * A * 0.96;
-  const portY = -B * 0.3;
+  const angle = -Math.PI * 0.5;
+  const edgeDist = A * 0.93;
+  const pY = -B * 0.25;
 
   return (
-    <group position={[edgeX, portY, edgeZ]} rotation={[0, -portAngle + Math.PI / 2, 0]}>
-      {/* USB-C port */}
-      <mesh position={[0, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
-        <boxGeometry args={[0.04, 0.022, 0.012]} />
-        <meshStandardMaterial color="#6B5D50" roughness={0.9} />
+    <group
+      position={[Math.sin(angle) * edgeDist, pY, Math.cos(angle) * edgeDist]}
+      rotation={[0, -angle + Math.PI / 2, 0]}
+    >
+      {/* Recessed port shelf */}
+      <mesh rotation={[0, Math.PI / 2, 0]}>
+        <boxGeometry args={[0.06, 0.08, 0.03]} />
+        <meshStandardMaterial color="#B09888" roughness={0.95} />
       </mesh>
-      {/* 3.5mm jack */}
-      <mesh position={[0, 0.04, 0]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[0.008, 0.008, 0.02, 8]} />
-        <meshStandardMaterial color="#6B5D50" roughness={0.9} />
+
+      {/* 3.5mm headphone jack — round hole */}
+      <mesh position={[0, 0.018, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <cylinderGeometry args={[0.008, 0.008, 0.04, 10]} />
+        <meshStandardMaterial color="#4A4038" roughness={0.8} />
+      </mesh>
+
+      {/* USB-C port — rectangular */}
+      <mesh position={[0, -0.018, 0]} rotation={[0, Math.PI / 2, 0]}>
+        <boxGeometry args={[0.02, 0.008, 0.04]} />
+        <meshStandardMaterial color="#4A4038" roughness={0.8} />
       </mesh>
     </group>
   );
 }
 
-// ── Side buttons (power pill + volume rocker) ────────────
+// ── Side buttons — power pill + volume rocker capsules ────
 function SideButtons() {
-  // Power button — small pill on the edge
-  const pwrAngle = Math.PI * 0.0; // front
-  const pwrX = Math.sin(pwrAngle) * A * 0.98;
-  const pwrZ = Math.cos(pwrAngle) * A * 0.98;
+  // From the reference: power button near top, two large oval volume
+  // buttons vertically stacked on the opposite side, with visible
+  // raised outlines (embossed into the silicone)
+  const pwrAngle = 0; // front edge
+  const volAngle = Math.PI * 0.72; // back-left edge
 
   return (
     <group>
-      {/* Power button — pill shape */}
-      <mesh
-        position={[pwrX, 0.02, pwrZ]}
-        rotation={[0, -pwrAngle, Math.PI / 2]}
+      {/* Power button — small pill near top */}
+      <group
+        position={[
+          Math.sin(pwrAngle) * A * 0.96,
+          B * 0.15,
+          Math.cos(pwrAngle) * A * 0.96,
+        ]}
+        rotation={[0, -pwrAngle, 0]}
       >
-        <capsuleGeometry args={[0.012, 0.03, 4, 8]} />
-        <SiliconeMaterial />
-      </mesh>
+        <mesh rotation={[0, 0, Math.PI / 2]}>
+          <capsuleGeometry args={[0.008, 0.02, 4, 8]} />
+          <SiliconeMaterial />
+        </mesh>
+        {/* Outline recess around power button */}
+        <mesh rotation={[0, 0, Math.PI / 2]}>
+          <capsuleGeometry args={[0.012, 0.028, 4, 8]} />
+          <meshStandardMaterial color="#B8A290" roughness={0.95} transparent opacity={0.6} />
+        </mesh>
+      </group>
 
-      {/* Volume rocker — two small bumps */}
-      {[-0.03, 0.03].map((offset, i) => {
-        const vAngle = Math.PI * 0.75;
-        return (
-          <mesh
-            key={i}
-            position={[
-              Math.sin(vAngle) * A * 0.98,
-              offset,
-              Math.cos(vAngle) * A * 0.98,
-            ]}
-            rotation={[0, -vAngle, Math.PI / 2]}
-          >
-            <capsuleGeometry args={[0.008, 0.018, 4, 8]} />
+      {/* Volume rocker — two elongated oval capsules, vertically stacked */}
+      {[0.08, -0.08].map((yOff, i) => (
+        <group
+          key={i}
+          position={[
+            Math.sin(volAngle) * A * 0.96,
+            yOff,
+            Math.cos(volAngle) * A * 0.96,
+          ]}
+          rotation={[0, -volAngle + Math.PI, 0]}
+        >
+          {/* Button body — raised capsule */}
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <capsuleGeometry args={[0.014, 0.06, 4, 8]} />
             <SiliconeMaterial />
           </mesh>
-        );
-      })}
+          {/* Outline recess */}
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <capsuleGeometry args={[0.019, 0.07, 4, 8]} />
+            <meshStandardMaterial color="#B8A290" roughness={0.95} transparent opacity={0.5} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Small indicator dot below volume rocker */}
+      <mesh
+        position={[
+          Math.sin(volAngle) * A * 0.97,
+          -0.18,
+          Math.cos(volAngle) * A * 0.97,
+        ]}
+      >
+        <sphereGeometry args={[0.005, 8, 8]} />
+        <meshStandardMaterial color="#B0A090" roughness={0.9} />
+      </mesh>
+    </group>
+  );
+}
+
+// ── Embossed text on the bottom ──────────────────────────
+// (Simulated with thin flat geometry — real text would need TextGeometry/font)
+function BottomText() {
+  // Position text lines on the bottom face
+  const textY = -B + 0.002;
+  const lines = [
+    { z: 0.05, w: 0.25, h: 0.012 },  // YEEZY TECH × KANO
+    { z: 0.025, w: 0.15, h: 0.01 },   // MODEL 1016
+    { z: 0.0, w: 0.2, h: 0.01 },      // CE IC:25240-1016
+    { z: -0.025, w: 0.22, h: 0.01 },   // FCC ID:2ATYD-1016
+    { z: -0.05, w: 0.18, h: 0.01 },    // STEMPLAYER.COM
+  ];
+
+  return (
+    <group rotation={[0, Math.PI * 0.25, 0]}>
+      {lines.map((line, i) => (
+        <mesh key={i} position={[0, textY, line.z]} rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[line.w, line.h]} />
+          <meshStandardMaterial
+            color="#BCA48C"
+            roughness={0.95}
+            transparent
+            opacity={0.3}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
     </group>
   );
 }
