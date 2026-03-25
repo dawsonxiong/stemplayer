@@ -1,8 +1,11 @@
+// LED colors: warm white/cream (matching the real Stem Player's default state)
+// The real device uses warm white LEDs that glow through silicone
+// Per-track color palettes (pink/blue etc.) vary by song
 export const STEMS = {
-  vocals: { label: "Vocals", colour: "#F5A623", colourLight: "#FDD68A", index: 0 },
-  drums: { label: "Drums", colour: "#E74C3C", colourLight: "#F5A6A0", index: 1 },
-  bass: { label: "Bass", colour: "#3498DB", colourLight: "#85C1E9", index: 2 },
-  other: { label: "Other", colour: "#2ECC71", colourLight: "#82E0AA", index: 3 },
+  vocals: { label: "Vocals", colour: "#F0D8B8", colourLight: "#F8E8D0", index: 0 },
+  drums: { label: "Drums", colour: "#ECD0B0", colourLight: "#F4E0C8", index: 1 },
+  bass: { label: "Bass", colour: "#E8CCB0", colourLight: "#F0DCC8", index: 2 },
+  other: { label: "Other", colour: "#E4C8A8", colourLight: "#ECD8C0", index: 3 },
 } as const;
 
 export type StemName = keyof typeof STEMS;
