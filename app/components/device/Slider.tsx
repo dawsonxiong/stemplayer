@@ -19,33 +19,29 @@ export function Slider({ stemName, audioEngine, amplitude }: SliderProps) {
     useSliderDrag(stemName, audioEngine, sliderRef);
 
   const fillHeight = volume * 100;
-  const glowIntensity = 6 + amplitude * 20;
-  const brightness = 1 + amplitude * 0.4;
 
   return (
     <div className="flex flex-col items-center gap-2">
       <div
         ref={sliderRef}
-        className="relative w-2.5 cursor-pointer overflow-hidden rounded-full select-none"
+        className="relative w-2 cursor-pointer overflow-hidden rounded-full select-none"
         style={{
-          height: "100px",
-          backgroundColor: "rgba(255,255,255,0.04)",
+          height: "90px",
+          backgroundColor: "rgba(0,0,0,0.06)",
           touchAction: "none",
-          border: "1px solid rgba(255,255,255,0.06)",
+          border: "1px solid rgba(0,0,0,0.08)",
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
       >
-        {/* LED fill */}
         <div
           className="absolute bottom-0 left-0 w-full rounded-full"
           style={{
             height: `${fillHeight}%`,
             backgroundColor: stem.colour,
-            filter: `brightness(${brightness})`,
-            boxShadow: `0 0 ${glowIntensity}px ${stem.colour}`,
+            opacity: 0.7 + amplitude * 0.3,
             transition: "height 16ms linear",
           }}
         />

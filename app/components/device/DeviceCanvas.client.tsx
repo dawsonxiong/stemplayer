@@ -1,43 +1,50 @@
 import { Canvas, useFrame } from "@react-three/fiber";
-import { OrbitControls, ContactShadows, Environment } from "@react-three/drei";
+import {
+  OrbitControls,
+  ContactShadows,
+  Environment,
+} from "@react-three/drei";
 import { useRef, useMemo } from "react";
 import * as THREE from "three";
 import { STEMS, type StemName } from "~/lib/constants";
 
 const STEM_NAMES = Object.keys(STEMS) as StemName[];
 
-// ── Oblate spheroid dimensions (squished sphere) ─────────
-// Real device: ~6.4cm diameter, ~2.5cm thick
-// Slightly less squished than pure 1:2.5 for better visual weight
-const EQUATORIAL_RADIUS = 1.2; // width
-const POLAR_RADIUS = 0.52; // half-height
-const SEGMENTS = 80;
+// ── Dimensions ───────────────────────────────────────────
+const A = 1.15; // equatorial radius
+const B = 0.48; // polar radius (half-height)
+const SEGMENTS = 96;
 
-// ── Groove dimensions (barely visible score lines) ───────
-const GROOVE_WIDTH = 0.065;
-const GROOVE_DEPTH = 0.025;
-const GROOVE_LENGTH_FRAC = 0.82;
-const CENTER_GAP = 0.15;
+// ── Grooves ──────────────────────────────────────────────
+const GROOVE_WIDTH = 0.045; // very thin score line
+const GROOVE_ARM_FRAC = 0.80;
+const CENTER_GAP = 0.14;
 const LEDS_PER_ARM = 8;
 
-// ── Cross-pattern positions ──────────────────────────────
-const GROOVE_POSITIONS: { stem: StemName; rotation: number }[] = [
+const GROOVE_MAP: { stem: StemName; rotation: number }[] = [
   { stem: "vocals", rotation: 0 },
   { stem: "bass", rotation: Math.PI },
   { stem: "drums", rotation: Math.PI / 2 },
   { stem: "other", rotation: -Math.PI / 2 },
 ];
 
-interface DeviceCanvasProps {
+interface Props {
   volumes: Record<StemName, number>;
   amplitudes: Record<StemName, number>;
 }
 
-export default function DeviceCanvas({ volumes, amplitudes }: DeviceCanvasProps) {
+// ── Surface Y at radius r ────────────────────────────────
+function surfaceY(r: number): number {
+  const clamped = Math.min(Math.abs(r), A * 0.999);
+  return B * Math.sqrt(1 - (clamped * clamped) / (A * A));
+}
+
+// ── Canvas ───────────────────────────────────────────────
+export default function DeviceCanvas({ volumes, amplitudes }: Props) {
   return (
     <div className="relative w-full" style={{ height: "clamp(340px, 45vw, 480px)" }}>
       <Canvas
-        camera={{ position: [0, 3.0, 2.2], fov: 30 }}
+        camera={{ position: [0, 2.2, 2.8], fov: 28 }}
         dpr={[1, 2]}
         shadows
         gl={{
@@ -45,55 +52,52 @@ export default function DeviceCanvas({ volumes, amplitudes }: DeviceCanvasProps)
           alpha: true,
           powerPreference: "high-performance",
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.05,
+          toneMappingExposure: 1.2,
         }}
         style={{ background: "transparent" }}
       >
-        {/* Soft warm ambient */}
-        <ambientLight intensity={0.45} color="#f0e8dc" />
+        {/* Soft warm ambient — flat product lighting */}
+        <ambientLight intensity={0.6} color="#f5ede0" />
 
-        {/* Key — warm, upper-left, soft shadow */}
+        {/* Key — soft, broad, directly above-front */}
         <directionalLight
-          position={[2, 4.5, 3]}
-          intensity={0.85}
-          color="#fff2e0"
+          position={[1, 5, 2]}
+          intensity={0.7}
+          color="#fff8f0"
           castShadow
           shadow-mapSize-width={1024}
           shadow-mapSize-height={1024}
-          shadow-bias={-0.0005}
+          shadow-bias={-0.0003}
         />
 
-        {/* Fill — cool, softer */}
-        <directionalLight position={[-3, 2, 1.5]} intensity={0.2} color="#dce4f0" />
+        {/* Fill — very subtle, opposite side */}
+        <directionalLight position={[-3, 3, 1]} intensity={0.15} color="#e8e0d8" />
 
-        {/* Rim */}
-        <directionalLight position={[-1, 3, -4]} intensity={0.4} color="#f5ebe0" />
+        {/* Rim — subtle edge definition */}
+        <directionalLight position={[0, 2, -4]} intensity={0.2} color="#f0e8dc" />
 
-        {/* Soft bottom bounce */}
-        <pointLight position={[0, -1.5, 0]} intensity={0.08} color="#d4c0a8" distance={5} decay={2} />
-
-        <Environment preset="apartment" environmentIntensity={0.12} />
+        <Environment preset="apartment" environmentIntensity={0.08} />
 
         <StemPlayerDevice volumes={volumes} amplitudes={amplitudes} />
 
         <ContactShadows
-          position={[0, -POLAR_RADIUS - 0.02, 0]}
-          opacity={0.35}
-          scale={4}
+          position={[0, -B - 0.015, 0]}
+          opacity={0.25}
+          scale={3.5}
           blur={3}
-          far={1.5}
+          far={1.2}
           resolution={512}
-          color="#2a2018"
+          color="#8a7e6e"
         />
 
         <OrbitControls
           makeDefault
           enablePan={false}
           enableZoom={false}
-          minPolarAngle={Math.PI / 5}
-          maxPolarAngle={Math.PI / 2.2}
+          minPolarAngle={Math.PI / 6}
+          maxPolarAngle={Math.PI / 2.4}
           autoRotate
-          autoRotateSpeed={0.35}
+          autoRotateSpeed={0.3}
           dampingFactor={0.05}
           rotateSpeed={0.5}
         />
@@ -102,92 +106,73 @@ export default function DeviceCanvas({ volumes, amplitudes }: DeviceCanvasProps)
   );
 }
 
-// ── Helper: get Y on the spheroid surface at distance r from center ──
-function getSurfaceY(r: number): number {
-  // Ellipse: x²/a² + y²/b² = 1  →  y = b * sqrt(1 - x²/a²)
-  const a = EQUATORIAL_RADIUS;
-  const b = POLAR_RADIUS;
-  const clamped = Math.min(r, a * 0.999);
-  return b * Math.sqrt(1 - (clamped * clamped) / (a * a));
-}
+// ── Spheroid profile ─────────────────────────────────────
+function createProfile(): THREE.Vector2[] {
+  const pts: THREE.Vector2[] = [];
 
-// ── Generate oblate spheroid profile ─────────────────────
-// True elliptical cross-section — no flat sides, no edges
-function createSpheroidProfile(): THREE.Vector2[] {
-  const points: THREE.Vector2[] = [];
-  const a = EQUATORIAL_RADIUS;
-  const b = POLAR_RADIUS;
+  // Flat bottom spot (so it sits on a surface)
+  const flatR = A * 0.2;
+  pts.push(new THREE.Vector2(0, -B));
+  pts.push(new THREE.Vector2(flatR, -B));
 
-  // Bottom half (slightly flattened — real device sits flat)
-  // Go from center-bottom up and outward
-  const bottomFlatFraction = 0.25; // small flat spot on bottom
-  const flatRadius = a * bottomFlatFraction;
-
-  // Flat bottom center
-  points.push(new THREE.Vector2(0, -b));
-  points.push(new THREE.Vector2(flatRadius, -b));
-
-  // Bottom elliptical arc (from flat spot to equator)
-  const bottomSteps = 20;
-  for (let i = 1; i <= bottomSteps; i++) {
-    const t = i / bottomSteps; // 0 = flat edge, 1 = equator
-    const angle = (Math.PI / 2) * t; // 0 to 90 degrees
-    // Blend from flat bottom into the ellipse
-    const ellipseR = a * Math.sin(angle);
-    const ellipseY = -b * Math.cos(angle);
-    // For small angles, blend with the flat bottom
-    const blend = Math.min(1, t * 3); // quick blend
-    const r = flatRadius + (ellipseR - flatRadius) * blend;
-    const y = -b + (-b - (-b)) * (1 - blend) + ellipseY * blend;
-    if (r > flatRadius) {
-      points.push(new THREE.Vector2(r, ellipseY));
-    }
+  // Bottom elliptical arc
+  for (let i = 1; i <= 30; i++) {
+    const angle = (Math.PI / 2) * (i / 30);
+    const r = A * Math.sin(angle);
+    const y = -B * Math.cos(angle);
+    if (r > flatR) pts.push(new THREE.Vector2(r, y));
   }
 
-  // Top half — pure ellipse (the dome)
-  const topSteps = 30;
-  for (let i = 1; i <= topSteps; i++) {
-    const t = i / topSteps; // 0 = equator, 1 = top center
-    const angle = (Math.PI / 2) * t;
-    const r = a * Math.cos(angle);
-    const y = b * Math.sin(angle);
-    points.push(new THREE.Vector2(r, y));
+  // Top half — pure ellipse
+  for (let i = 1; i <= 40; i++) {
+    const angle = (Math.PI / 2) * (i / 40);
+    const r = A * Math.cos(angle);
+    const y = B * Math.sin(angle);
+    pts.push(new THREE.Vector2(r, y));
   }
 
-  return points;
+  return pts;
 }
 
-// ── Main device assembly ─────────────────────────────────
-function StemPlayerDevice({ volumes, amplitudes }: DeviceCanvasProps) {
-  const geometry = useMemo(() => {
-    const profile = createSpheroidProfile();
-    const geo = new THREE.LatheGeometry(profile, SEGMENTS);
-    geo.computeVertexNormals();
-    return geo;
+// ── Device assembly ──────────────────────────────────────
+function StemPlayerDevice({ volumes, amplitudes }: Props) {
+  const geo = useMemo(() => {
+    const g = new THREE.LatheGeometry(createProfile(), SEGMENTS);
+    g.computeVertexNormals();
+    return g;
   }, []);
 
   return (
     <group>
-      {/* Spheroid body — warm pinkish-tan silicone */}
-      <mesh geometry={geometry} castShadow receiveShadow>
+      {/* Body — matte silicone */}
+      <mesh geometry={geo} castShadow receiveShadow>
         <meshPhysicalMaterial
           color="#C9AB94"
-          roughness={0.85}
+          roughness={0.9}
           metalness={0.0}
-          clearcoat={0.03}
-          clearcoatRoughness={0.9}
-          envMapIntensity={0.15}
-          sheen={0.1}
-          sheenColor="#D4BCA6"
-          sheenRoughness={0.8}
+          clearcoat={0.02}
+          clearcoatRoughness={1.0}
+          sheen={0.15}
+          sheenColor="#D8C4B0"
+          sheenRoughness={0.85}
+          envMapIntensity={0.08}
         />
       </mesh>
 
       {/* Center button */}
-      <CenterButton />
+      <mesh position={[0, surfaceY(0) + 0.006, 0]}>
+        <cylinderGeometry args={[0.07, 0.07, 0.012, 32]} />
+        <meshPhysicalMaterial
+          color="#C0A48C"
+          roughness={0.85}
+          metalness={0.0}
+          sheen={0.1}
+          sheenColor="#D0B8A4"
+        />
+      </mesh>
 
-      {/* Cross-pattern groove arms */}
-      {GROOVE_POSITIONS.map(({ stem, rotation }) => (
+      {/* Grooves + LEDs */}
+      {GROOVE_MAP.map(({ stem, rotation }) => (
         <GrooveArm
           key={stem}
           stemName={stem}
@@ -200,25 +185,7 @@ function StemPlayerDevice({ volumes, amplitudes }: DeviceCanvasProps) {
   );
 }
 
-// ── Center button — flush, barely raised ─────────────────
-function CenterButton() {
-  const btnRadius = CENTER_GAP * 0.5;
-  const surfaceY = getSurfaceY(0);
-
-  return (
-    <mesh position={[0, surfaceY + 0.008, 0]}>
-      <cylinderGeometry args={[btnRadius, btnRadius, 0.016, 32]} />
-      <meshPhysicalMaterial
-        color="#BFA28C"
-        roughness={0.8}
-        metalness={0.0}
-        clearcoat={0.02}
-      />
-    </mesh>
-  );
-}
-
-// ── Single groove arm ────────────────────────────────────
+// ── Groove arm ───────────────────────────────────────────
 function GrooveArm({
   stemName,
   rotation,
@@ -230,28 +197,60 @@ function GrooveArm({
   volume: number;
   amplitude: number;
 }) {
-  const stem = STEMS[stemName];
-  const armLength = EQUATORIAL_RADIUS * GROOVE_LENGTH_FRAC - CENTER_GAP;
+  const armLen = A * GROOVE_ARM_FRAC - CENTER_GAP;
   const litCount = Math.round(volume * LEDS_PER_ARM);
+  const colour = STEMS[stemName].colour;
+
+  // Build smooth groove ribbon following the surface
+  const grooveGeo = useMemo(() => {
+    const segs = 32;
+    const hw = GROOVE_WIDTH / 2;
+    const verts: number[] = [];
+    const idx: number[] = [];
+
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const d = CENTER_GAP + armLen * t;
+      const y = surfaceY(d) - 0.008; // barely recessed
+      verts.push(-hw, y, d);
+      verts.push(hw, y, d);
+    }
+
+    for (let i = 0; i < segs; i++) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      idx.push(a, c, b, b, c, d);
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }, [armLen]);
 
   return (
     <group rotation={[0, rotation, 0]}>
-      {/* Groove channel segments — follow the dome curvature */}
-      <GrooveChannel armLength={armLength} />
+      {/* Groove — same hue as body, just slightly darker */}
+      <mesh geometry={grooveGeo}>
+        <meshStandardMaterial
+          color="#B89E8A"
+          roughness={0.95}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* Small notch/bump at outer end of groove */}
+      <GrooveEndCap distance={CENTER_GAP + armLen} />
 
       {/* LED dots */}
       {Array.from({ length: LEDS_PER_ARM }).map((_, i) => {
-        const spacing = armLength / LEDS_PER_ARM;
-        const dist = CENTER_GAP + spacing * (i + 0.5);
-        const surfaceY = getSurfaceY(dist);
-
+        const d = CENTER_GAP + (armLen / LEDS_PER_ARM) * (i + 0.5);
         return (
-          <LEDDot
+          <LED
             key={i}
             lit={i < litCount}
-            colour={stem.colour}
-            distance={dist}
-            surfaceY={surfaceY}
+            distance={d}
+            colour={colour}
             amplitude={amplitude}
           />
         );
@@ -260,144 +259,109 @@ function GrooveArm({
   );
 }
 
-// ── Groove channel — single extruded shape following dome curve ───
-function GrooveChannel({ armLength }: { armLength: number }) {
-  const geometry = useMemo(() => {
-    const segments = 24;
-    const hw = GROOVE_WIDTH / 2;
-    const positions: number[] = [];
-    const indices: number[] = [];
-
-    for (let i = 0; i <= segments; i++) {
-      const t = i / segments;
-      const dist = CENTER_GAP + armLength * t;
-      const y = getSurfaceY(dist) - GROOVE_DEPTH * 0.55;
-
-      // Two vertices per segment (left and right edges of groove)
-      positions.push(-hw, y, dist); // left
-      positions.push(hw, y, dist);  // right
-    }
-
-    // Build quads
-    for (let i = 0; i < segments; i++) {
-      const a = i * 2;
-      const b = a + 1;
-      const c = a + 2;
-      const d = a + 3;
-      indices.push(a, c, b);
-      indices.push(b, c, d);
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    geo.setIndex(indices);
-    geo.computeVertexNormals();
-    return geo;
-  }, [armLength]);
-
+// ── Groove end cap (small notch at the tip) ──────────────
+function GrooveEndCap({ distance }: { distance: number }) {
+  const y = surfaceY(distance) - 0.004;
   return (
-    <mesh geometry={geometry}>
-      <meshStandardMaterial
-        color="#B09A8A"
-        roughness={0.95}
-        metalness={0}
-        side={THREE.DoubleSide}
-      />
+    <mesh position={[0, y, distance]}>
+      <boxGeometry args={[GROOVE_WIDTH * 1.4, 0.01, 0.025]} />
+      <meshStandardMaterial color="#B89E8A" roughness={0.95} />
     </mesh>
   );
 }
 
-// ── LED dot with subsurface diffusion ────────────────────
-function LEDDot({
+// ── Single LED ───────────────────────────────────────────
+function LED({
   lit,
-  colour,
   distance,
-  surfaceY,
+  colour,
   amplitude,
 }: {
   lit: boolean;
-  colour: string;
   distance: number;
-  surfaceY: number;
+  colour: string;
   amplitude: number;
 }) {
   const coreRef = useRef<THREE.Mesh>(null);
-  const innerGlowRef = useRef<THREE.Mesh>(null);
-  const outerGlowRef = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
 
-  const dotRadius = GROOVE_WIDTH * 0.22;
-  const dotY = surfaceY - GROOVE_DEPTH * 0.2;
+  const sy = surfaceY(distance);
+  const dotY = sy - 0.003;
+  const r = 0.012; // very small dot
 
   useFrame(() => {
     if (!lit) return;
-    const pulse = 1.0 + amplitude * 2.5;
+    const p = 0.8 + amplitude * 1.5;
     if (coreRef.current) {
-      (coreRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = pulse;
+      (coreRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = p;
     }
-    if (innerGlowRef.current) {
-      (innerGlowRef.current.material as THREE.MeshStandardMaterial).opacity = 0.25 + amplitude * 0.25;
+    if (glowRef.current) {
+      (glowRef.current.material as THREE.MeshStandardMaterial).opacity =
+        0.12 + amplitude * 0.18;
     }
-    if (outerGlowRef.current) {
-      (outerGlowRef.current.material as THREE.MeshStandardMaterial).opacity = 0.08 + amplitude * 0.12;
+    if (haloRef.current) {
+      (haloRef.current.material as THREE.MeshStandardMaterial).opacity =
+        0.04 + amplitude * 0.06;
     }
   });
 
   if (!lit) {
-    // Unlit — nearly invisible, just a faint dot in the groove
+    // Unlit — faintest hint of a dot
     return (
       <mesh position={[0, dotY, distance]}>
-        <sphereGeometry args={[dotRadius * 0.5, 6, 6]} />
-        <meshStandardMaterial color="#9E8D7E" roughness={0.95} transparent opacity={0.15} />
+        <sphereGeometry args={[r * 0.6, 6, 6]} />
+        <meshStandardMaterial color="#B0A090" roughness={0.95} transparent opacity={0.08} />
       </mesh>
     );
   }
 
   return (
     <group>
-      {/* LED core — small bright point */}
+      {/* Core dot */}
       <mesh ref={coreRef} position={[0, dotY, distance]}>
-        <sphereGeometry args={[dotRadius, 8, 8]} />
+        <sphereGeometry args={[r, 8, 8]} />
         <meshStandardMaterial
           color={colour}
           emissive={colour}
-          emissiveIntensity={1.2}
-          roughness={0.1}
+          emissiveIntensity={0.8}
+          roughness={0.2}
           toneMapped={false}
         />
       </mesh>
 
-      {/* Inner glow — simulates light bleeding into silicone right around the LED */}
+      {/* Inner glow — tight diffusion through silicone */}
       <mesh
-        ref={innerGlowRef}
-        position={[0, surfaceY + 0.002, distance]}
+        ref={glowRef}
+        position={[0, sy + 0.001, distance]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
-        <circleGeometry args={[dotRadius * 2.5, 16]} />
+        <circleGeometry args={[r * 2.0, 12]} />
         <meshStandardMaterial
           color={colour}
           emissive={colour}
-          emissiveIntensity={1.8}
+          emissiveIntensity={1.0}
           transparent
-          opacity={0.3}
+          opacity={0.15}
           side={THREE.DoubleSide}
           depthWrite={false}
           toneMapped={false}
         />
       </mesh>
 
-      {/* Outer glow — wide soft haze, subsurface scatter approximation */}
+      {/* Outer halo — wide subtle bleed */}
       <mesh
-        ref={outerGlowRef}
-        position={[0, surfaceY + 0.004, distance]}
+        ref={haloRef}
+        position={[0, sy + 0.002, distance]}
         rotation={[-Math.PI / 2, 0, 0]}
       >
-        <circleGeometry args={[dotRadius * 6, 20]} />
+        <circleGeometry args={[r * 4.5, 16]} />
         <meshStandardMaterial
           color={colour}
           emissive={colour}
-          emissiveIntensity={1.2}
+          emissiveIntensity={0.6}
           transparent
-          opacity={0.1}
+          opacity={0.05}
           side={THREE.DoubleSide}
           depthWrite={false}
           toneMapped={false}
