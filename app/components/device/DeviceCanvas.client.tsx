@@ -168,8 +168,8 @@ function Device({ volumes, amplitudes }: Props) {
       <PortCutouts />
       <SideButtons />
 
-      {/* Bottom text — embossed on underside */}
-      <group position={[0, -B + 0.005, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      {/* Bottom text — on the flat underside, facing down */}
+      <group position={[0, -B - 0.001, 0]} rotation={[Math.PI / 2, 0, 0]}>
         <Text fontSize={0.045} color="#BCA48C" anchorX="center" anchorY="middle" position={[0, 0.12, 0]}>
           YEEZY TECH × KANO
         </Text>
@@ -210,107 +210,123 @@ function surfacePoint(angle: number, elevation: number) {
   };
 }
 
-// ── Speaker grille — dots on the surface ─────────────────
-function SpeakerGrille() {
-  const center = surfacePoint(Math.PI * 0.5, 0.45);
+// ── Helper: orient a group to face outward from the spheroid ──
+function SurfaceGroup({ angle, elevation, children }: {
+  angle: number; elevation: number; children: React.ReactNode;
+}) {
+  const { pos, normal } = surfacePoint(angle, elevation);
 
-  // Generate hole positions in a local grid, then project onto sphere
+  // Build a rotation that aligns Z+ with the outward normal
+  const up = new THREE.Vector3(0, 1, 0);
+  const n = new THREE.Vector3(...normal);
+  const quat = new THREE.Quaternion().setFromUnitVectors(
+    new THREE.Vector3(0, 0, 1), n
+  );
+
+  return (
+    <group position={pos} quaternion={quat}>
+      {children}
+    </group>
+  );
+}
+
+// ── Speaker grille — cylinders punched INTO the surface ───
+function SpeakerGrille() {
   const holes: { angle: number; elev: number }[] = [];
   for (let row = -2; row <= 2; row++) {
     const cols = Math.abs(row) <= 1 ? 4 : 3;
-    const off = row % 2 !== 0 ? 0.03 : 0;
+    const off = row % 2 !== 0 ? 0.025 : 0;
     for (let col = 0; col < cols; col++) {
-      const da = ((col - (cols - 1) / 2) * 0.055 + off) / A;
-      const de = row * 0.055 / B;
-      holes.push({
-        angle: Math.PI * 0.5 + da,
-        elev: 0.45 + de,
-      });
+      const da = ((col - (cols - 1) / 2) * 0.048 + off) / A;
+      const de = (row * 0.048) / B;
+      holes.push({ angle: Math.PI * 0.5 + da, elev: 0.42 + de });
     }
   }
 
   return (
     <group>
-      {holes.map((h, i) => {
-        const { pos } = surfacePoint(h.angle, h.elev);
-        return (
-          <group key={i}>
-            <mesh position={pos}>
-              <sphereGeometry args={[0.025, 10, 10]} />
-              <meshStandardMaterial color="#5A4A38" roughness={0.7} />
-            </mesh>
-          </group>
-        );
-      })}
+      {holes.map((h, i) => (
+        <SurfaceGroup key={i} angle={h.angle} elevation={h.elev}>
+          {/* Cylinder going INTO the body — dark face = hole */}
+          <mesh position={[0, 0, -0.02]}>
+            <cylinderGeometry args={[0.012, 0.012, 0.04, 10]} />
+            <meshStandardMaterial color="#3A2E22" roughness={0.6} />
+          </mesh>
+        </SurfaceGroup>
+      ))}
     </group>
   );
 }
 
-// ── Ports — dark spots on the surface ────────────────────
+// ── Ports — cylinders/boxes recessed INTO the surface ─────
 function PortCutouts() {
-  const jackPoint = surfacePoint(-Math.PI * 0.5, -0.25);
-  const usbPoint = surfacePoint(-Math.PI * 0.5, -0.48);
-
   return (
     <group>
-      {/* 3.5mm jack */}
-      <mesh position={jackPoint.pos}>
-        <sphereGeometry args={[0.028, 12, 12]} />
-        <meshStandardMaterial color="#2A2018" roughness={0.5} />
-      </mesh>
-      {/* Jack rim */}
-      <mesh position={jackPoint.pos}>
-        <sphereGeometry args={[0.035, 12, 12]} />
-        <meshStandardMaterial color="#7A6A58" roughness={0.8} />
-      </mesh>
+      {/* 3.5mm jack — cylinder going into body */}
+      <SurfaceGroup angle={-Math.PI * 0.5} elevation={-0.2}>
+        <mesh position={[0, 0, -0.025]}>
+          <cylinderGeometry args={[0.022, 0.022, 0.05, 12]} />
+          <meshStandardMaterial color="#1A1410" roughness={0.4} metalness={0.1} />
+        </mesh>
+        {/* Chrome rim flush with surface */}
+        <mesh position={[0, 0, 0]}>
+          <ringGeometry args={[0.022, 0.03, 16]} />
+          <meshStandardMaterial color="#8A7A68" roughness={0.5} metalness={0.2} />
+        </mesh>
+      </SurfaceGroup>
 
-      {/* USB-C */}
-      <mesh position={usbPoint.pos} rotation={[0, Math.PI * 0.5, 0]}>
-        <boxGeometry args={[0.06, 0.022, 0.025]} />
-        <meshStandardMaterial color="#2A2018" roughness={0.5} />
-      </mesh>
-      {/* USB-C rim */}
-      <mesh position={usbPoint.pos} rotation={[0, Math.PI * 0.5, 0]}>
-        <boxGeometry args={[0.07, 0.032, 0.02]} />
-        <meshStandardMaterial color="#7A6A58" roughness={0.8} />
-      </mesh>
+      {/* USB-C — box going into body */}
+      <SurfaceGroup angle={-Math.PI * 0.5} elevation={-0.48}>
+        <mesh position={[0, 0, -0.02]} rotation={[Math.PI / 2, 0, 0]}>
+          <boxGeometry args={[0.055, 0.04, 0.02]} />
+          <meshStandardMaterial color="#1A1410" roughness={0.4} metalness={0.1} />
+        </mesh>
+        {/* Silver rim */}
+        <mesh position={[0, 0, 0]} rotation={[0, 0, 0]}>
+          <planeGeometry args={[0.065, 0.028]} />
+          <meshStandardMaterial color="#8A7A68" roughness={0.5} metalness={0.2} side={THREE.DoubleSide} />
+        </mesh>
+      </SurfaceGroup>
     </group>
   );
 }
 
-// ── Side buttons — capsules that sit on the surface ──────
+// ── Side buttons — capsules half-embedded in the surface ──
 function SideButtons() {
-  // Power button
-  const pwr = surfacePoint(0, 0.35);
-  // Volume buttons
-  const vol1 = surfacePoint(Math.PI * 0.72, 0.2);
-  const vol2 = surfacePoint(Math.PI * 0.72, -0.2);
-
   return (
     <group>
-      {/* Power — small pill flush on surface */}
-      <group position={pwr.pos}>
-        <mesh rotation={[0, 0, Math.PI / 2]}>
-          <capsuleGeometry args={[0.014, 0.035, 4, 8]} />
-          <meshStandardMaterial color="#B8A28C" roughness={0.92} />
+      {/* Power — small pill, half in / half out of surface */}
+      <SurfaceGroup angle={0} elevation={0.35}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.008]}>
+          <capsuleGeometry args={[0.012, 0.03, 4, 8]} />
+          <meshStandardMaterial color="#BCA894" roughness={0.9} />
         </mesh>
-      </group>
+      </SurfaceGroup>
 
-      {/* Volume up */}
-      <group position={vol1.pos}>
-        <mesh rotation={[0, -Math.PI * 0.72 + Math.PI, Math.PI / 2]}>
-          <capsuleGeometry args={[0.022, 0.1, 4, 8]} />
-          <meshStandardMaterial color="#BCA894" roughness={0.92} />
+      {/* Volume up — large elongated capsule */}
+      <SurfaceGroup angle={Math.PI * 0.72} elevation={0.18}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.01]}>
+          <capsuleGeometry args={[0.018, 0.09, 4, 8]} />
+          <meshStandardMaterial color="#BCA894" roughness={0.9} />
         </mesh>
-      </group>
+        {/* Recess outline */}
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.003]}>
+          <capsuleGeometry args={[0.024, 0.1, 4, 8]} />
+          <meshStandardMaterial color="#B09880" roughness={0.95} />
+        </mesh>
+      </SurfaceGroup>
 
       {/* Volume down */}
-      <group position={vol2.pos}>
-        <mesh rotation={[0, -Math.PI * 0.72 + Math.PI, Math.PI / 2]}>
-          <capsuleGeometry args={[0.022, 0.1, 4, 8]} />
-          <meshStandardMaterial color="#BCA894" roughness={0.92} />
+      <SurfaceGroup angle={Math.PI * 0.72} elevation={-0.18}>
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.01]}>
+          <capsuleGeometry args={[0.018, 0.09, 4, 8]} />
+          <meshStandardMaterial color="#BCA894" roughness={0.9} />
         </mesh>
-      </group>
+        <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 0, 0.003]}>
+          <capsuleGeometry args={[0.024, 0.1, 4, 8]} />
+          <meshStandardMaterial color="#B09880" roughness={0.95} />
+        </mesh>
+      </SurfaceGroup>
     </group>
   );
 }
