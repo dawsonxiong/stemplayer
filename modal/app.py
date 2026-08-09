@@ -14,7 +14,6 @@ demucs_image = (
         "torchaudio==2.3.1",
         "boto3==1.34.0",
         "requests==2.31.0",
-        "fastapi[standard]",
     )
     # Pre-download model weights into the image
     .run_commands(
@@ -22,36 +21,48 @@ demucs_image = (
     )
 )
 
+api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
+    "fastapi[standard]"
+)
+
+
+def _report(webhook_url: str, webhook_secret: str, payload: dict) -> None:
+    import requests
+
+    try:
+        requests.post(
+            webhook_url,
+            json=payload,
+            headers={"x-webhook-secret": webhook_secret},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
 
 @app.function(
     image=demucs_image,
     gpu="T4",
-    timeout=300,
+    timeout=900,
     scaledown_window=300,
     memory=8192,
     secrets=[modal.Secret.from_name("r2-creds")],
 )
-@modal.fastapi_endpoint(method="POST")
-def separate_api(item: dict):
-    """
-    Called by Cloudflare Worker to trigger stem separation.
-
-    Payload from Worker:
-    {
-        "task_id": "uuid",
-        "input_r2_key": "uploads/uuid/song.mp3",
-        "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook",
-        "webhook_secret": "..."
-    }
+def separate(
+    task_id: str, input_r2_key: str, webhook_url: str, webhook_secret: str
+):
+    """Download from R2, run Demucs, upload stems, report back via webhook.
 
     R2 credentials come from Modal secrets, not the request body.
     """
     import boto3
-    import requests
 
-    task_id = item["task_id"]
-    webhook_url = item["webhook_url"]
-    webhook_secret = item["webhook_secret"]
+    def progress(pct: int):
+        _report(
+            webhook_url,
+            webhook_secret,
+            {"task_id": task_id, "status": "processing", "progress": pct},
+        )
 
     try:
         s3 = boto3.client(
@@ -68,11 +79,12 @@ def separate_api(item: dict):
             input_path = os.path.join(tmpdir, "input_audio")
             output_dir = os.path.join(tmpdir, "output")
 
-            # Download from R2
-            s3.download_file(bucket, item["input_r2_key"], input_path)
+            progress(5)
+            s3.download_file(bucket, input_r2_key, input_path)
+            progress(15)
 
             # Run Demucs (htdemucs base model — ~25s on T4 for a 4-min track)
-            subprocess.run(
+            result = subprocess.run(
                 [
                     "python", "-m", "demucs",
                     "-n", "htdemucs",
@@ -83,8 +95,11 @@ def separate_api(item: dict):
                 ],
                 capture_output=True,
                 text=True,
-                check=True,
             )
+            if result.returncode != 0:
+                raise RuntimeError(f"demucs failed: {result.stderr[-2000:]}")
+
+            progress(80)
 
             # Upload stems back to R2
             stems_dir = os.path.join(output_dir, "htdemucs", "input_audio")
@@ -102,24 +117,44 @@ def separate_api(item: dict):
                 )
                 stem_keys[stem_name] = r2_key
 
-            # Webhook callback
-            requests.post(
+            _report(
                 webhook_url,
-                json={"task_id": task_id, "status": "ready", "stems": stem_keys},
-                headers={"x-webhook-secret": webhook_secret},
-                timeout=10,
+                webhook_secret,
+                {"task_id": task_id, "status": "ready", "stems": stem_keys},
             )
 
         return {"task_id": task_id, "status": "complete"}
 
     except Exception as e:
-        try:
-            requests.post(
-                webhook_url,
-                json={"task_id": task_id, "status": "error", "error": str(e)},
-                headers={"x-webhook-secret": webhook_secret},
-                timeout=10,
-            )
-        except Exception:
-            pass
+        _report(
+            webhook_url,
+            webhook_secret,
+            {"task_id": task_id, "status": "error", "error": str(e)},
+        )
         return {"task_id": task_id, "status": "error", "error": str(e)}
+
+
+@app.function(image=api_image)
+@modal.fastapi_endpoint(method="POST")
+def separate_api(item: dict):
+    """
+    Called by the Cloudflare Worker to enqueue a separation job.
+
+    Payload from Worker:
+    {
+        "task_id": "uuid",
+        "input_r2_key": "uploads/uuid/song.mp3",
+        "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook",
+        "webhook_secret": "..."
+    }
+
+    Spawns the GPU job and returns immediately — the Worker must not block
+    for the full separation.
+    """
+    separate.spawn(
+        item["task_id"],
+        item["input_r2_key"],
+        item["webhook_url"],
+        item["webhook_secret"],
+    )
+    return {"task_id": item["task_id"], "status": "queued"}

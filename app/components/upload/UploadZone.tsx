@@ -111,11 +111,11 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
           <line x1="12" y1="3" x2="12" y2="15" />
         </svg>
 
-        <span className="text-sm text-[var(--color-text-secondary)]">
+        <span className="text-sm tracking-[0.06em] uppercase text-[var(--color-text-secondary)]">
           Drop a track or click to upload
         </span>
 
-        <span className="text-[10px] text-[var(--color-text-muted)]">
+        <span className="text-[10px] tracking-[0.04em] text-[var(--color-text-muted)]">
           MP3, WAV, FLAC, OGG, AAC — up to {MAX_FILE_SIZE_MB}MB
         </span>
       </div>

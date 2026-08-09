@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "import"],
+  "env": { "browser": true, "node": true, "es2024": true },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "rules": {
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "no-unused-vars": "error",
+    "eqeqeq": "error",
+    "typescript/no-explicit-any": "error",
+    "no-await-in-loop": "off",
+    "react/react-in-jsx-scope": "off",
+    "no-underscore-dangle": ["warn", { "allow": ["_effects", "_recorder"] }]
+  },
+  "overrides": [
+    {
+      "files": ["workers/**"],
+      "rules": { "no-console": "off" }
+    }
+  ],
+  "ignorePatterns": [
+    "node_modules",
+    "build",
+    ".react-router",
+    ".wrangler",
+    "public",
+    "modal",
+    "worker-configuration.d.ts",
+    "*.tsbuildinfo",
+    "pnpm-lock.yaml"
+  ]
+}

@@ -10,6 +10,15 @@ export const STEMS = {
 
 export type StemName = keyof typeof STEMS;
 
+// The three colourways the real product ships in.
+export const DEVICE_COLORS = {
+  tan: { label: "Tan", swatch: "#C09B87" },
+  bao: { label: "Bao", swatch: "#E4E3DE" },
+  clear: { label: "Clear", swatch: "#9B9791" },
+} as const;
+
+export type DeviceColor = keyof typeof DEVICE_COLORS;
+
 export const EFFECTS = {
   echo: { min: 0.05, max: 1.0, default: 0.3 },
   feedback: { min: 0, max: 0.85, default: 0.4 },
@@ -28,4 +37,5 @@ export const ACCEPTED_FORMATS = [
   "audio/x-m4a",
 ];
 export const POLL_INTERVAL_MS = 2000;
+export const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 export const AUTO_DELETE_DAYS = 14;

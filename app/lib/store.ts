@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { StemName } from "./constants";
+import type { DeviceColor, StemName } from "./constants";
 
 interface PlayerState {
   // Track state
@@ -28,6 +28,12 @@ interface PlayerState {
   // Recording
   isRecording: boolean;
 
+  // Appearance
+  deviceColor: DeviceColor;
+
+  // Master output, driven by the device's side rocker
+  masterVolume: number;
+
   // Actions
   setVolume: (stem: StemName, value: number) => void;
   setStatus: (status: PlayerState["status"]) => void;
@@ -42,6 +48,8 @@ interface PlayerState {
   setEcho: (params: Partial<PlayerState["echo"]>) => void;
   setLoop: (params: Partial<PlayerState["loop"]>) => void;
   setRecording: (recording: boolean) => void;
+  setDeviceColor: (color: DeviceColor) => void;
+  setMasterVolume: (value: number) => void;
   reset: () => void;
 }
 
@@ -60,6 +68,8 @@ const initialState = {
   gate: { threshold: 0, active: false },
   loop: { active: false, start: 0, end: 0 },
   isRecording: false,
+  deviceColor: "tan" as const,
+  masterVolume: 1,
 };
 
 export const usePlayerStore = create<PlayerState>((set) => ({
@@ -79,5 +89,13 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   setEcho: (params) => set((s) => ({ echo: { ...s.echo, ...params } })),
   setLoop: (params) => set((s) => ({ loop: { ...s.loop, ...params } })),
   setRecording: (isRecording) => set({ isRecording }),
-  reset: () => set(initialState),
+  setDeviceColor: (deviceColor) => set({ deviceColor }),
+  setMasterVolume: (masterVolume) => set({ masterVolume }),
+  // Colourway and output level are user preferences, not track state.
+  reset: () =>
+    set((s) => ({
+      ...initialState,
+      deviceColor: s.deviceColor,
+      masterVolume: s.masterVolume,
+    })),
 }));

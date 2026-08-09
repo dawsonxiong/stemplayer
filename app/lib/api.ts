@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_MS } from "./constants";
+import { POLL_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
 
 export async function requestUploadUrl(file: File) {
   const res = await fetch("/api/upload", {
@@ -61,31 +61,26 @@ interface JobStatus {
   stems?: Record<string, string>;
 }
 
-export function pollStatus(
+export async function pollStatus(
   taskId: string,
   onProgress?: (progress: number) => void
 ): Promise<JobStatus> {
-  return new Promise((resolve, reject) => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/status/${taskId}`);
-        const data = (await res.json()) as JobStatus;
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
 
-        if (data.status === "ready") {
-          clearInterval(interval);
-          resolve(data);
-        } else if (data.status === "error") {
-          clearInterval(interval);
-          reject(new Error(data.error || "Separation failed"));
-        } else if (data.progress && onProgress) {
-          onProgress(data.progress);
-        }
-      } catch (err) {
-        clearInterval(interval);
-        reject(err);
-      }
-    }, POLL_INTERVAL_MS);
-  });
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+    const res = await fetch(`/api/status/${taskId}`);
+    const data = (await res.json()) as JobStatus;
+
+    if (data.status === "ready") return data;
+    if (data.status === "error") {
+      throw new Error(data.error || "Separation failed");
+    }
+    if (typeof data.progress === "number") onProgress?.(data.progress);
+  }
+
+  throw new Error("Separation timed out. Try a shorter track.");
 }
 
 export async function fetchStemUrls(taskId: string) {

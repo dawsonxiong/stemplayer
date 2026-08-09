@@ -1,9 +1,9 @@
 @import "tailwindcss" source(".");
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif,
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-mono: "JetBrains Mono", "Geist Mono", ui-monospace, monospace;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
 
   --color-bg-primary: #e8e3d4;
   --color-bg-secondary: #ddd8c8;
@@ -21,6 +21,8 @@
 
 html,
 body {
+  /* The store sets everything in Geist Mono, headings included */
+  font-family: var(--font-mono);
   background-color: var(--color-bg-primary);
   color: var(--color-text-primary);
   min-height: 100vh;

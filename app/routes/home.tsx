@@ -1,10 +1,13 @@
 import type { Route } from "./+types/home";
 import { useCallback } from "react";
 import { Device } from "~/components/device/Device";
+import { ColorPicker } from "~/components/device/ColorPicker";
+import { MasterVolume } from "~/components/device/MasterVolume";
 import { TransportBar } from "~/components/transport/TransportBar";
 import { EffectsPanel } from "~/components/effects/EffectsPanel";
 import { UploadZone } from "~/components/upload/UploadZone";
 import { UploadProgress } from "~/components/upload/UploadProgress";
+import { DriftMeter } from "~/components/DriftMeter";
 import { useAudioEngine } from "~/hooks/useAudioEngine";
 import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
 import { usePlayerStore } from "~/lib/store";
@@ -79,24 +82,24 @@ export default function Home() {
       {/* Header */}
       <header className="mb-2">
         {trackTitle && status === "ready" ? (
-          <h1 className="max-w-md truncate text-center text-base font-medium tracking-wide text-[var(--color-text-primary)]">
+          <h1 className="max-w-md truncate text-center text-base tracking-[0.12em] uppercase text-[var(--color-text-primary)]">
             {trackTitle}
           </h1>
         ) : status === "uploading" ? (
-          <h1 className="text-center text-sm text-[var(--color-text-secondary)]">
-            Uploading...
+          <h1 className="text-center text-sm tracking-[0.08em] uppercase text-[var(--color-text-secondary)]">
+            Uploading
           </h1>
         ) : status === "processing" ? (
-          <h1 className="text-center text-sm text-[var(--color-text-secondary)]">
-            Separating stems...
+          <h1 className="text-center text-sm tracking-[0.08em] uppercase text-[var(--color-text-secondary)]">
+            Separating stems
           </h1>
         ) : (
-          <div className="flex flex-col items-center gap-1">
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--color-text-primary)]">
-              Stem Player
+          <div className="flex flex-col items-center gap-1.5">
+            <h1 className="text-2xl tracking-[0.14em] uppercase text-[var(--color-text-primary)]">
+              Stem1
             </h1>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              Upload a track to begin
+            <p className="text-xs tracking-[0.06em] text-[var(--color-text-muted)]">
+              Upload any song
             </p>
           </div>
         )}
@@ -104,6 +107,11 @@ export default function Home() {
 
       {/* Device */}
       <Device audioEngine={audioEngine} />
+
+      <div className="mt-1 flex flex-col items-center gap-2">
+        <ColorPicker />
+        <MasterVolume />
+      </div>
 
       {/* Transport */}
       <div className="mt-2 w-full max-w-sm">
@@ -136,9 +144,15 @@ export default function Home() {
 
       {/* Keyboard shortcuts hint */}
       {status === "ready" && (
-        <div className="mt-6 text-center text-[10px] text-[var(--color-text-muted)]">
+        <div className="mt-6 text-center text-[10px] tracking-[0.04em] text-[var(--color-text-muted)]">
           Space: play/pause &middot; 1-4: toggle stems &middot; E: effects
           &middot; &larr;&rarr;: seek
+        </div>
+      )}
+
+      {import.meta.env.DEV && status === "ready" && (
+        <div className="mt-2">
+          <DriftMeter audioEngine={audioEngine} />
         </div>
       )}
     </div>

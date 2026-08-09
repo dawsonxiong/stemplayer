@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "cloudflare@cloudflare": true,
+    "playwright@claude-plugins-official": true
+  }
+}

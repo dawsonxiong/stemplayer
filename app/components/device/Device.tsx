@@ -43,6 +43,36 @@ export function Device({ audioEngine }: DeviceProps) {
     isPlaying && status === "ready"
   );
 
+  const handleStemVolume = useCallback(
+    (stem: StemName, value: number) => {
+      usePlayerStore.getState().setVolume(stem, value);
+      audioEngine?.setVolume(stem, value);
+    },
+    [audioEngine]
+  );
+
+  const handleTogglePlay = useCallback(() => {
+    const store = usePlayerStore.getState();
+    if (!audioEngine || store.status !== "ready") return;
+    if (audioEngine.isPlaying) {
+      audioEngine.pause();
+      store.setPlaying(false);
+    } else {
+      audioEngine.play();
+      store.setPlaying(true);
+    }
+  }, [audioEngine]);
+
+  const handleVolumeStep = useCallback(
+    (delta: number) => {
+      const store = usePlayerStore.getState();
+      const next = Math.min(1, Math.max(0, store.masterVolume + delta));
+      store.setMasterVolume(next);
+      audioEngine?.setMasterVolume(next);
+    },
+    [audioEngine]
+  );
+
   const isProcessing = status === "processing";
 
   return (
@@ -65,7 +95,13 @@ export function Device({ audioEngine }: DeviceProps) {
           </div>
         </div>
       ) : (
-        <DeviceScene volumes={volumes} amplitudes={amplitudes} />
+        <DeviceScene
+          volumes={volumes}
+          amplitudes={amplitudes}
+          onStemVolume={handleStemVolume}
+          onTogglePlay={handleTogglePlay}
+          onVolumeStep={handleVolumeStep}
+        />
       )}
 
       {/* Volume sliders below the 3D device */}

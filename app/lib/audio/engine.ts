@@ -38,13 +38,20 @@ export class AudioEngine {
         audio.preload = "auto";
         audio.src = url;
 
+        // "canplay" not "canplaythrough" — the latter never fires reliably in
+        // Safari and would hang the load forever. The element keeps buffering.
         await new Promise<void>((resolve, reject) => {
-          audio.addEventListener("canplaythrough", () => resolve(), {
-            once: true,
-          });
-          audio.addEventListener("error", () => reject(audio.error), {
-            once: true,
-          });
+          audio.addEventListener("canplay", () => resolve(), { once: true });
+          audio.addEventListener(
+            "error",
+            () =>
+              reject(
+                new Error(
+                  `Could not load ${name} stem: ${audio.error?.message ?? "unknown error"}`
+                )
+              ),
+            { once: true }
+          );
         });
 
         return [name as StemName, audio] as const;
@@ -131,6 +138,16 @@ export class AudioEngine {
   get duration(): number {
     const first = this.stems.values().next().value;
     return first?.audio.duration ?? 0;
+  }
+
+  /** Spread between the fastest and slowest stem, in ms. Each HTMLAudioElement
+   *  runs its own clock, so this is the number that decides whether the
+   *  streaming engine is good enough or has to become AudioBufferSourceNodes. */
+  getDriftMs(): number {
+    const times: number[] = [];
+    for (const [, stem] of this.stems) times.push(stem.audio.currentTime);
+    if (times.length < 2) return 0;
+    return (Math.max(...times) - Math.min(...times)) * 1000;
   }
 
   get isPlaying(): boolean {
