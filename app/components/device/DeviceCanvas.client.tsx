@@ -53,12 +53,20 @@ interface Props {
   onStemVolume?: (stem: StemName, value: number) => void;
   onTogglePlay?: () => void;
   onVolumeStep?: (delta: number) => void;
+  onTogglePower?: () => void;
 }
 
-// Side rocker, found by looking for dense side-wall geometry: two features at
-// 18-32° and 40-54° (a third at ~70° is the power button, left unwired).
-const VOL_UP_ARC: [number, number] = [15, 35];
-const VOL_DOWN_ARC: [number, number] = [37, 57];
+// The volume rocker is a single pill running from -2° to 33°, with the "+"
+// glyph at 3° and "−" at 29° — read off the model by hovering the embossed
+// marks. Angles stay signed (atan2 range) because the pill straddles 0°.
+// The two-hole pill at 43-76° is a strap mount, not a control, and the round
+// button past it is deliberately inert: power lives on the centre button.
+const VOL_UP_ARC: [number, number] = [-6, 16];
+const VOL_DOWN_ARC: [number, number] = [16, 36];
+
+// The real device powers on/off by holding the top button for a couple of
+// seconds; a short press is play/pause.
+const POWER_HOLD_MS = 1000;
 
 type Zone =
   | { kind: "button" }
@@ -73,9 +81,8 @@ function zoneAt(p: THREE.Vector3): Zone | null {
   // Side rocker first — it straddles the equator, so it must be tested before
   // the top-face gate below.
   if (rXZ > 0.88 && Math.abs(p.y) < 0.17) {
-    let deg = (Math.atan2(p.x, p.z) * 180) / Math.PI;
-    if (deg < 0) deg += 360;
-    if (deg >= VOL_UP_ARC[0] && deg <= VOL_UP_ARC[1]) {
+    const deg = (Math.atan2(p.x, p.z) * 180) / Math.PI;
+    if (deg >= VOL_UP_ARC[0] && deg < VOL_UP_ARC[1]) {
       return { kind: "volume", delta: 0.1 };
     }
     if (deg >= VOL_DOWN_ARC[0] && deg <= VOL_DOWN_ARC[1]) {
@@ -112,9 +119,20 @@ export default function DeviceCanvas({
   onStemVolume,
   onTogglePlay,
   onVolumeStep,
+  onTogglePower,
 }: Props) {
   return (
-    <div className="relative w-full" style={{ height: "clamp(340px, 45vw, 480px)" }}>
+    // The ground shadow darkens the transparent canvas, so the canvas's own
+    // bottom edge showed up as a hard horizontal seam against the page. Fade
+    // the last slice out so it blends at any zoom.
+    <div
+      className="relative w-full"
+      style={{
+        height: "clamp(340px, 45vw, 480px)",
+        maskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
+        WebkitMaskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
+      }}
+    >
       <Canvas
         camera={{ position: [0, 3.35, 2.9], fov: 28 }}
         dpr={[1, 2]}
@@ -153,6 +171,7 @@ export default function DeviceCanvas({
           onStemVolume={onStemVolume}
           onTogglePlay={onTogglePlay}
           onVolumeStep={onVolumeStep}
+          onTogglePower={onTogglePower}
         />
 
         <GroundShadow />
@@ -212,12 +231,14 @@ function patchLedMaterial(
   material: THREE.MeshStandardMaterial,
   level: THREE.Vector4,
   amp: THREE.Vector4,
-  center: THREE.Vector3
+  center: THREE.Vector3,
+  power: { value: number }
 ) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uLevel = { value: level };
     shader.uniforms.uAmp = { value: amp };
     shader.uniforms.uCenter = { value: center };
+    shader.uniforms.uOn = power;
     shader.uniforms.uBand = { value: new THREE.Vector2(LED_R_MIN, LED_R_MAX) };
     LED_PALETTE.forEach((hex, i) => {
       shader.uniforms[`uLed${i}`] = { value: new THREE.Color(hex) };
@@ -282,6 +303,7 @@ function patchLedMaterial(
         uniform vec4 uLevel;
         uniform vec4 uAmp;
         uniform vec2 uBand;
+        uniform float uOn;
         uniform vec3 uLed0;
         uniform vec3 uLed1;
         uniform vec3 uLed2;
@@ -365,7 +387,7 @@ function patchLedMaterial(
           float topOnly = step( 0.0, vObjPos.y );
 
           totalEmissiveRadiance *=
-            ledPalette( idx ) * dotMask * lit * topOnly * ( 0.55 + a * 1.4 );
+            ledPalette( idx ) * dotMask * lit * topOnly * uOn * ( 0.55 + a * 1.4 );
         #endif
         `
       );
@@ -379,9 +401,11 @@ function Device({
   onStemVolume,
   onTogglePlay,
   onVolumeStep,
+  onTogglePower,
 }: Props) {
   const { scene } = useGLTF(MODEL_URL);
   const deviceColor = usePlayerStore((s) => s.deviceColor);
+  const isOn = usePlayerStore((s) => s.isOn);
   const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
   const controls = useThree((s) => s.controls) as { enabled: boolean } | null;
   const drag = useRef<{
@@ -390,13 +414,14 @@ function Device({
     delta: number;
     sx: number;
     sy: number;
-  }>({ mode: "none", stem: null, delta: 0, sx: 0, sy: 0 });
+    t0: number;
+  }>({ mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0 });
 
   // Safety net: if the pointer is released off the model, the mesh never sees
   // pointerup and OrbitControls would stay disabled forever.
   useEffect(() => {
     const end = () => {
-      drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0 };
+      drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0 };
       if (controls) controls.enabled = true;
       document.body.style.cursor = "";
     };
@@ -411,6 +436,8 @@ function Device({
   const handleDown = (e: ThreeEvent<PointerEvent>) => {
     const zone = zoneAt(e.point);
     if (!zone) return; // not a control — let OrbitControls orbit
+    // While powered off only the top button responds, so it can switch back on.
+    if (!isOn && zone.kind !== "button") return;
     e.stopPropagation();
     if (controls) controls.enabled = false;
     drag.current = {
@@ -419,6 +446,7 @@ function Device({
       delta: zone.kind === "volume" ? zone.delta : 0,
       sx: e.clientX,
       sy: e.clientY,
+      t0: performance.now(),
     };
     if (zone.kind === "groove") onStemVolume?.(zone.stem, zone.value);
   };
@@ -444,15 +472,21 @@ function Device({
     const moved = Math.hypot(e.clientX - drag.current.sx, e.clientY - drag.current.sy);
     // Treat as a press only if it was a tap, not the start of an orbit.
     if (moved < 6) {
-      if (drag.current.mode === "button") onTogglePlay?.();
+      if (drag.current.mode === "button") {
+        // Hold to power on/off, tap to play/pause — and while off, only the
+        // hold does anything.
+        if (performance.now() - drag.current.t0 >= POWER_HOLD_MS) onTogglePower?.();
+        else if (isOn) onTogglePlay?.();
+      }
       if (drag.current.mode === "volume") onVolumeStep?.(drag.current.delta);
     }
-    drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0 };
+    drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0 };
     if (controls) controls.enabled = true;
   };
 
   const level = useRef(new THREE.Vector4(1, 1, 1, 1));
   const amp = useRef(new THREE.Vector4(0, 0, 0, 0));
+  const power = useRef({ value: 1 });
   const body = useRef<THREE.MeshStandardMaterial | null>(null);
 
   useMemo(() => {
@@ -487,7 +521,7 @@ function Device({
         mesh.geometry.computeBoundingBox();
         const center = new THREE.Vector3();
         mesh.geometry.boundingBox!.getCenter(center);
-        patchLedMaterial(mat, level.current, amp.current, center);
+        patchLedMaterial(mat, level.current, amp.current, center, power.current);
       }
     });
   }, [scene, maxAnisotropy]);
@@ -501,6 +535,7 @@ function Device({
   }, [deviceColor]);
 
   useFrame(() => {
+    power.current.value = isOn ? 1 : 0;
     const l = level.current;
     const a = amp.current;
     for (let i = 0; i < 4; i++) {

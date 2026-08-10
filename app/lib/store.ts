@@ -34,6 +34,9 @@ interface PlayerState {
   // Master output, driven by the device's side rocker
   masterVolume: number;
 
+  // Device power. Off means dark LEDs and silence, like the real unit.
+  isOn: boolean;
+
   // Actions
   setVolume: (stem: StemName, value: number) => void;
   setStatus: (status: PlayerState["status"]) => void;
@@ -50,6 +53,7 @@ interface PlayerState {
   setRecording: (recording: boolean) => void;
   setDeviceColor: (color: DeviceColor) => void;
   setMasterVolume: (value: number) => void;
+  setPower: (on: boolean) => void;
   reset: () => void;
 }
 
@@ -70,6 +74,7 @@ const initialState = {
   isRecording: false,
   deviceColor: "tan" as const,
   masterVolume: 1,
+  isOn: true,
 };
 
 export const usePlayerStore = create<PlayerState>((set) => ({
@@ -91,11 +96,13 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   setRecording: (isRecording) => set({ isRecording }),
   setDeviceColor: (deviceColor) => set({ deviceColor }),
   setMasterVolume: (masterVolume) => set({ masterVolume }),
+  setPower: (isOn) => set({ isOn }),
   // Colourway and output level are user preferences, not track state.
   reset: () =>
     set((s) => ({
       ...initialState,
       deviceColor: s.deviceColor,
       masterVolume: s.masterVolume,
+      isOn: s.isOn,
     })),
 }));

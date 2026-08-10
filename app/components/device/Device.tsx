@@ -73,6 +73,17 @@ export function Device({ audioEngine }: DeviceProps) {
     [audioEngine]
   );
 
+  const handleTogglePower = useCallback(() => {
+    const store = usePlayerStore.getState();
+    const next = !store.isOn;
+    store.setPower(next);
+    if (!next) {
+      // Powering off silences and stops, like pulling the plug.
+      audioEngine?.pause();
+      store.setPlaying(false);
+    }
+  }, [audioEngine]);
+
   const isProcessing = status === "processing";
 
   return (
@@ -101,6 +112,7 @@ export function Device({ audioEngine }: DeviceProps) {
           onStemVolume={handleStemVolume}
           onTogglePlay={handleTogglePlay}
           onVolumeStep={handleVolumeStep}
+          onTogglePower={handleTogglePower}
         />
       )}
 

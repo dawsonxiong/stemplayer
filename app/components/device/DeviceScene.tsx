@@ -9,6 +9,7 @@ interface DeviceSceneProps {
   onStemVolume: (stem: StemName, value: number) => void;
   onTogglePlay: () => void;
   onVolumeStep: (delta: number) => void;
+  onTogglePower: () => void;
 }
 
 function Placeholder() {
@@ -28,6 +29,7 @@ export function DeviceScene({
   onStemVolume,
   onTogglePlay,
   onVolumeStep,
+  onTogglePower,
 }: DeviceSceneProps) {
   const [mounted, setMounted] = useState(false);
 
@@ -45,6 +47,7 @@ export function DeviceScene({
         onStemVolume={onStemVolume}
         onTogglePlay={onTogglePlay}
         onVolumeStep={onVolumeStep}
+        onTogglePower={onTogglePower}
       />
     </Suspense>
   );

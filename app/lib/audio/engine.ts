@@ -15,11 +15,14 @@ export class AudioEngine {
   private masterGain: GainNode | null = null;
   private _effects: EffectsChain | null = null;
   private _recorder: MixRecorder | null = null;
+  /** Survives the gain node, which only exists once a track has been loaded. */
+  private _masterVolume = 1;
 
   private getContext(): AudioContext {
     if (!this.ctx) {
       this.ctx = new AudioContext();
       this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this._masterVolume;
       this.masterGain.connect(this.ctx.destination);
     }
     return this.ctx;
@@ -107,6 +110,9 @@ export class AudioEngine {
   }
 
   setMasterVolume(value: number): void {
+    // Remember it either way: the rocker can be used before a track is loaded,
+    // and the gain node does not exist until then.
+    this._masterVolume = value;
     if (!this.masterGain || !this.ctx) return;
     this.masterGain.gain.linearRampToValueAtTime(
       value,
