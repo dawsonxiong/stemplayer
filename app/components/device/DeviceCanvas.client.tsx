@@ -30,16 +30,50 @@ const LED_PALETTE = ["#4CC2DB", "#9EC2DE", "#D1E5F5", "#C79AD9", "#DA66D6"];
 // solved against the map's linear value so the tan source's warm cast cancels
 // out — bao needs ~3x on blue just to reach neutral. Tuned against the product
 // page's rotate posters.
-const COLORWAYS: Record<
-  DeviceColor,
-  { tint: [number, number, number]; roughness: number }
-> = {
-  tan: { tint: [1.24, 1.17, 1.12], roughness: 0.62 },
-  bao: { tint: [1.45, 2.2, 3.0], roughness: 0.58 },
-  // Approximation only: the real clear is translucent smoke. True transmission
-  // needs an env map to read correctly, and drei's <Environment> is what was
-  // crashing the context, so this is a tinted opaque stand-in.
-  clear: { tint: [0.69, 1.05, 1.44], roughness: 0.34 },
+interface Colorway {
+  tint: [number, number, number];
+  roughness: number;
+  /** Refraction, so clear is genuinely see-through rather than grey paint. */
+  transmission: number;
+  thickness: number;
+  clearcoat: number;
+  /** Beer-Lambert tint of the light passing through — this is what makes it
+   *  read as smoked rather than as clean glass. */
+  attenuation: string;
+  attenuationDistance: number;
+}
+
+const COLORWAYS: Record<DeviceColor, Colorway> = {
+  tan: {
+    tint: [1.24, 1.17, 1.12],
+    roughness: 0.62,
+    transmission: 0,
+    thickness: 0,
+    clearcoat: 0,
+    attenuation: "#ffffff",
+    attenuationDistance: Infinity,
+  },
+  bao: {
+    tint: [1.45, 2.2, 3.0],
+    roughness: 0.58,
+    transmission: 0,
+    thickness: 0,
+    clearcoat: 0,
+    attenuation: "#ffffff",
+    attenuationDistance: Infinity,
+  },
+  clear: {
+    // Neutralise the tan base map so the look comes from the light passing
+    // through rather than from the shell's own colour.
+    tint: [1.0, 1.5, 2.0],
+    roughness: 0.28,
+    transmission: 0.82,
+    thickness: 0.26,
+    clearcoat: 0.6,
+    // Light, barely-warm absorption over a long distance: smoked, not tinted.
+    attenuation: "#CFC9BA",
+    attenuationDistance: 1.8,
+  },
 };
 
 // Centre button edge sits at r=0.12 (dense vertex ring); padded for touch.
@@ -56,13 +90,12 @@ interface Props {
   onTogglePower?: () => void;
 }
 
-// The volume rocker is a single pill running from -2° to 33°, with the "+"
-// glyph at 3° and "−" at 29° — read off the model by hovering the embossed
-// marks. Angles stay signed (atan2 range) because the pill straddles 0°.
-// The two-hole pill at 43-76° is a strap mount, not a control, and the round
-// button past it is deliberately inert: power lives on the centre button.
-const VOL_UP_ARC: [number, number] = [-6, 16];
-const VOL_DOWN_ARC: [number, number] = [16, 36];
+// The rocker's two halves, split at the midpoint between the embossed glyphs
+// ("+" at 3°, "−" at 29°). Angles stay signed (atan2 range) because the pad
+// straddles 0°. Stops short of the strap mount at 43-76°, which is not a
+// control; power lives on the centre button.
+const VOL_UP_ARC: [number, number] = [-11, 17];
+const VOL_DOWN_ARC: [number, number] = [17, 42];
 
 // The real device powers on/off by holding the top button for a couple of
 // seconds; a short press is play/pause.
@@ -228,7 +261,7 @@ function GroundShadow() {
  *  from uniforms, so volume can light whole LEDs the way the device does.
  */
 function patchLedMaterial(
-  material: THREE.MeshStandardMaterial,
+  material: THREE.MeshPhysicalMaterial,
   level: THREE.Vector4,
   amp: THREE.Vector4,
   center: THREE.Vector3,
@@ -277,24 +310,59 @@ function patchLedMaterial(
           diffuseColor *= sampledDiffuseColor;
         #endif
         {
-          float d, i, arm; vec2 dir;
-          ledGeom( d, i, dir, arm );
-          float well = ( 1.0 - smoothstep( LED_RADIUS * 0.95, LED_RADIUS * 1.55, d ) )
+          Groove g = grooveAt();
+          // The channel reads shallow if only its walls are shaded, so occlude
+          // the whole floor and deepen it further right around each LED well.
+          float chan = channelMask( g );
+          float well = ( 1.0 - smoothstep( LED_RADIUS * 0.9, LED_RADIUS * 1.7, g.dist ) )
                      * step( 0.0, vObjPos.y );
-          diffuseColor.rgb *= mix( 1.0, 0.66, well );
+          diffuseColor.rgb *= mix( 1.0, 0.68, chan );
+          diffuseColor.rgb *= mix( 1.0, 0.92, well );
+
         }`
       )
       .replace(
         "#include <normal_fragment_begin>",
         `#include <normal_fragment_begin>
+        vec3 nShaped = normal;
         {
-          float d, i, arm; vec2 dir;
-          ledGeom( d, i, dir, arm );
-          float rim = smoothstep( LED_RADIUS * 0.55, LED_RADIUS, d )
-                    * ( 1.0 - smoothstep( LED_RADIUS, LED_RADIUS * 1.5, d ) )
-                    * step( 0.0, vObjPos.y );
-          normal = normalize( normal - normalMatrix * vec3( dir.x, 0.0, dir.y ) * rim * 0.6 );
+          Groove g = grooveAt();
+          float top = step( 0.0, vObjPos.y );
+
+          // Channel walls: tilt inward across the trench so the sides catch
+          // light like a moulded groove rather than a painted stripe.
+          float cd = channelSDF( g );
+          float wall = ( 1.0 - smoothstep( 0.0, 0.018, abs( cd ) ) ) * step( -0.020, cd ) * top;
+          vec2 wdir = normalize( g.v * g.dv + vec2( 1e-6 ) );
+          normal = normalize( normal - normalMatrix * vec3( wdir.x, 0.0, wdir.y ) * wall * 0.85 );
+
+          // The LED sits in its own dish at the bottom of that channel.
+          vec2 ldir = normalize( g.u * ( g.along - mix( uBand.x, uBand.y, ( g.idx + 0.5 ) / LED_COUNT ) ) + g.v * g.dv + vec2( 1e-6 ) );
+          float rim = smoothstep( LED_RADIUS * 0.55, LED_RADIUS, g.dist )
+                    * ( 1.0 - smoothstep( LED_RADIUS, LED_RADIUS * 1.5, g.dist ) ) * top;
+          normal = normalize( normal - normalMatrix * vec3( ldir.x, 0.0, ldir.y ) * rim * 0.5 );
+
+          // Keep our own channel/well shaping, but drop the bumpMap on the top
+          // face (see normal_fragment_maps below).
+          nShaped = normal;
         }`
+      )
+      .replace(
+        "#include <normal_fragment_maps>",
+        `#include <normal_fragment_maps>
+        // bumpMap is only wanted for the moulded text underneath; on the top
+        // face its texture seams read as hard lines through the channel.
+        normal = mix( normal, nShaped, step( 0.0, vObjPos.y ) );
+
+        // Shape-agnostic crease accent: darkens wherever the surface actually
+        // bends, so modelled edges (pad rims, ports, channel walls) read as
+        // tactile without any hand-placed geometry to get wrong.
+        float curv = clamp( length( fwidth( normal ) ) * 1.8, 0.0, 1.0 );`
+      )
+      .replace(
+        "#include <aomap_fragment>",
+        `#include <aomap_fragment>
+        reflectedLight.indirectDiffuse *= mix( 1.0, 0.72, curv );`
       )
       .replace(
         "#include <common>",
@@ -312,39 +380,70 @@ function patchLedMaterial(
         #define LED_COUNT 5.0
         // Spacing along the groove is (0.735-0.334)/5 = 0.080 and the groove
         // half-width is 0.053, so this keeps gaps and stays inside the channel.
-        #define LED_RADIUS 0.033
+        #define LED_RADIUS 0.040
+        // How far light spreads into the silicone around each LED. Real ones
+        // diffuse through the rubber rather than ending at a hard edge.
+        #define LED_BLEED 0.058
+        #define GROOVE_HALF_W 0.053
 
         // three declares normalMatrix only in the vertex prefix, but WebGL
         // uniforms are per-program, so redeclaring it here picks up the value.
         uniform mat3 normalMatrix;
 
-        // Single source of truth for LED placement: distance from the nearest
-        // LED centre, its index, the outward XZ direction and which groove it
-        // belongs to. The shading, normal and emissive passes all read from
-        // here so the well and the light it holds cannot drift apart.
+        struct Groove {
+          float armF;
+          float along;   // distance along the groove axis
+          float dv;      // signed offset across the channel
+          float dist;    // distance to the nearest LED centre
+          float idx;     // which LED that is
+          vec2 u;        // groove axis in XZ
+          vec2 v;        // across-channel direction in XZ
+        };
+
+        // Single source of truth for groove and LED placement. Shading, normals
+        // and emission all read from here so the channel, the well and the light
+        // sitting in it cannot drift apart.
         //
         // Histogramming lit vertices puts the four grooves on the axes
         // (0/90/180/270), so the angle snaps to them — binning between them
         // would split each groove down the middle across two stems. Distance is
         // measured along the groove's OWN axis, not radius from the device
         // centre, which would make every LED boundary an arc.
-        void ledGeom( out float dist, out float idx, out vec2 dirXZ, out float armF ) {
+        Groove grooveAt() {
+          Groove g;
           float ang = atan( vObjPos.x, vObjPos.z ) / ( 2.0 * PI ) + 0.5;
-          armF = mod( floor( ang * 4.0 + 0.5 ), 4.0 );
-          float theta = ( armF / 4.0 - 0.5 ) * 2.0 * PI;
-          vec2 u = vec2( sin( theta ), cos( theta ) );
-          vec2 v = vec2( u.y, -u.x );
+          g.armF = mod( floor( ang * 4.0 + 0.5 ), 4.0 );
+          float theta = ( g.armF / 4.0 - 0.5 ) * 2.0 * PI;
+          g.u = vec2( sin( theta ), cos( theta ) );
+          g.v = vec2( g.u.y, -g.u.x );
 
-          float along = dot( vObjPos.xz, u );
-          float t = clamp( ( along - uBand.x ) / ( uBand.y - uBand.x ), 0.0, 1.0 );
-          idx = min( floor( t * LED_COUNT ), LED_COUNT - 1.0 );
+          g.along = dot( vObjPos.xz, g.u );
+          float t = clamp( ( g.along - uBand.x ) / ( uBand.y - uBand.x ), 0.0, 1.0 );
+          g.idx = min( floor( t * LED_COUNT ), LED_COUNT - 1.0 );
 
-          float centerAlong = mix( uBand.x, uBand.y, ( idx + 0.5 ) / LED_COUNT );
-          float du = along - centerAlong;
-          float dv = dot( vObjPos.xz, v );
-          dist = length( vec2( du, dv ) );
-          dirXZ = normalize( u * du + v * dv + vec2( 1e-6 ) );
+          float centerAlong = mix( uBand.x, uBand.y, ( g.idx + 0.5 ) / LED_COUNT );
+          g.dv = dot( vObjPos.xz, g.v );
+          g.dist = length( vec2( g.along - centerAlong, g.dv ) );
+          return g;
         }
+
+        // Signed distance to the moulded slot. A capsule, not a box: crossing
+        // two 1-D falloffs gives hard corners, which showed up as a rectangle
+        // sitting inside the model's rounded channel.
+        float channelSDF( Groove g ) {
+          float mid = ( uBand.x + uBand.y ) * 0.5;
+          float halfSeg = ( uBand.y - uBand.x ) * 0.5 + 0.048 - GROOVE_HALF_W;
+          float x = max( abs( g.along - mid ) - halfSeg, 0.0 );
+          return length( vec2( x, g.dv ) ) - GROOVE_HALF_W;
+        }
+
+        // 1 on the channel floor, falling to 0 outside it. Drives both the
+        // occlusion in the trench and the wall shading.
+        float channelMask( Groove g ) {
+          return ( 1.0 - smoothstep( -0.014, 0.002, channelSDF( g ) ) )
+               * step( 0.0, vObjPos.y );
+        }
+
 
         // mix() chain rather than an indexed array: the index is computed, and
         // GLSL ES 1.0 only allows constant expressions for uniform array reads.
@@ -355,32 +454,39 @@ function patchLedMaterial(
           c = mix( c, uLed3, step( 2.5, i ) );
           c = mix( c, uLed4, step( 3.5, i ) );
           return c;
-        }`
+                }`
       )
       .replace(
         "#include <emissivemap_fragment>",
         `
         #ifdef USE_EMISSIVEMAP
-          float dist, idx, armF; vec2 dir;
-          ledGeom( dist, idx, dir, armF );
+          Groove g = grooveAt();
 
           // One-hot select instead of dynamic array indexing, which GLSL ES 1.0
           // does not allow on uniforms.
           vec4 onehot = vec4(
-            step( -0.5, armF ) * step( armF, 0.5 ),
-            step( 0.5, armF ) * step( armF, 1.5 ),
-            step( 1.5, armF ) * step( armF, 2.5 ),
-            step( 2.5, armF ) * step( armF, 3.5 )
+            step( -0.5, g.armF ) * step( g.armF, 0.5 ),
+            step( 0.5, g.armF ) * step( g.armF, 1.5 ),
+            step( 1.5, g.armF ) * step( g.armF, 2.5 ),
+            step( 2.5, g.armF ) * step( g.armF, 3.5 )
           );
           float lvl = dot( uLevel, onehot );
           float a = dot( uAmp, onehot );
 
-          // Round LEDs: 2D distance from the centre, not a band crossed with a
-          // width (which is a rectangle by construction).
-          float dotMask = 1.0 - smoothstep( LED_RADIUS - 0.009, LED_RADIUS + 0.004, dist );
+          // A soft core plus a gaussian bleed, so the light diffuses into the
+          // silicone instead of stopping at a hard circle.
+          float core = 1.0 - smoothstep( LED_RADIUS * 0.30, LED_RADIUS * 1.30, g.dist );
+          float bleed = exp( -( g.dist * g.dist ) / ( LED_BLEED * LED_BLEED ) );
+          float dotMask = min( 1.0, core * 0.80 + bleed * 0.45 );
 
-          // Volume lights whole LEDs outward from the centre, like the device.
-          float lit = step( ( idx + 0.5 ) / LED_COUNT, lvl );
+          // Volume fills the strip outward in WHOLE LEDs. Quantising the count
+          // first puts the cut on an integer cell boundary — i.e. in the gap
+          // between two LEDs — so dragging never leaves one half-lit. Without
+          // the ceil the boundary slides through an LED's centre.
+          float cellPos = ( g.along - uBand.x ) / ( uBand.y - uBand.x ) * LED_COUNT;
+          float nLit = ceil( lvl * LED_COUNT - 0.0001 );
+          float lit = 1.0 - smoothstep( nLit - 0.2, nLit + 0.2, cellPos );
+          float idx = g.idx;
 
           // Top face only — the pattern is derived from XZ, so without this it
           // mirrors onto the underside.
@@ -415,19 +521,32 @@ function Device({
     sx: number;
     sy: number;
     t0: number;
-  }>({ mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0 });
+    firedHold: boolean;
+  }>({ mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0, firedHold: false });
+
+  // Power fires on a timer while the button is still held, so the device
+  // reacts under your finger instead of waiting for release.
+  const holdTimer = useRef<number | null>(null);
+  const clearHold = () => {
+    if (holdTimer.current !== null) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+  };
 
   // Safety net: if the pointer is released off the model, the mesh never sees
   // pointerup and OrbitControls would stay disabled forever.
   useEffect(() => {
     const end = () => {
-      drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0 };
+      clearHold();
+      drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0, firedHold: false };
       if (controls) controls.enabled = true;
       document.body.style.cursor = "";
     };
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
     return () => {
+      clearHold();
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
     };
@@ -447,13 +566,27 @@ function Device({
       sx: e.clientX,
       sy: e.clientY,
       t0: performance.now(),
+      firedHold: false,
     };
     if (zone.kind === "groove") onStemVolume?.(zone.stem, zone.value);
+    if (zone.kind === "button") {
+      clearHold();
+      holdTimer.current = window.setTimeout(() => {
+        holdTimer.current = null;
+        drag.current.firedHold = true;
+        onTogglePower?.();
+      }, POWER_HOLD_MS);
+    }
   };
 
   const handleMove = (e: ThreeEvent<PointerEvent>) => {
     if (drag.current.mode === "none") {
       document.body.style.cursor = zoneAt(e.point) ? "pointer" : "";
+      return;
+    }
+    if (drag.current.mode === "button") {
+      const moved = Math.hypot(e.clientX - drag.current.sx, e.clientY - drag.current.sy);
+      if (moved >= 6) clearHold();
       return;
     }
     if (drag.current.mode !== "groove") return;
@@ -469,25 +602,24 @@ function Device({
   const handleUp = (e: ThreeEvent<PointerEvent>) => {
     if (drag.current.mode === "none") return;
     e.stopPropagation();
+    clearHold();
     const moved = Math.hypot(e.clientX - drag.current.sx, e.clientY - drag.current.sy);
     // Treat as a press only if it was a tap, not the start of an orbit.
     if (moved < 6) {
-      if (drag.current.mode === "button") {
-        // Hold to power on/off, tap to play/pause — and while off, only the
-        // hold does anything.
-        if (performance.now() - drag.current.t0 >= POWER_HOLD_MS) onTogglePower?.();
-        else if (isOn) onTogglePlay?.();
+      // Power already fired mid-hold; releasing must not also toggle play.
+      if (drag.current.mode === "button" && !drag.current.firedHold && isOn) {
+        onTogglePlay?.();
       }
       if (drag.current.mode === "volume") onVolumeStep?.(drag.current.delta);
     }
-    drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0 };
+    drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0, firedHold: false };
     if (controls) controls.enabled = true;
   };
 
   const level = useRef(new THREE.Vector4(1, 1, 1, 1));
   const amp = useRef(new THREE.Vector4(0, 0, 0, 0));
   const power = useRef({ value: 1 });
-  const body = useRef<THREE.MeshStandardMaterial | null>(null);
+  const body = useRef<THREE.MeshPhysicalMaterial | null>(null);
 
   useMemo(() => {
     scene.traverse((obj) => {
@@ -496,14 +628,29 @@ function Device({
       mesh.castShadow = true;
       mesh.receiveShadow = true;
 
-      const mat = mesh.material as THREE.MeshStandardMaterial;
+      let mat = mesh.material as THREE.MeshPhysicalMaterial;
       // Only the outer shell is a closed solid. The port cavities and speaker
       // are open surfaces whose inner walls are back-faces, so forcing
       // FrontSide on them punched holes in the cutouts.
       mat.side = mat.name === "Stemplayer" ? THREE.FrontSide : THREE.DoubleSide;
       if (mat.name === "Stemplayer") {
+        // The loader gives us MeshStandardMaterial, which has no transmission.
+        // Rebuild as physical, carrying the maps across.
+        const phys = new THREE.MeshPhysicalMaterial({
+          name: mat.name,
+          map: mat.map,
+          emissive: mat.emissive,
+          emissiveMap: mat.emissiveMap,
+          metalness: mat.metalness,
+          roughness: mat.roughness,
+          side: mat.side,
+        });
+        phys.ior = 1.46;
+        phys.clearcoatRoughness = 0.18;
+        mesh.material = phys;
+        mat = phys;
         body.current = mat;
-        mat.emissiveIntensity = 2.2;
+        mat.emissiveIntensity = 1.15;
         // The LED dots sit ~40 texels apart in a 4096 map that lands on a few
         // hundred screen pixels. At the default anisotropy the mip chain blurs
         // neighbouring dots into one continuous stripe.
@@ -529,9 +676,17 @@ function Device({
   useEffect(() => {
     const mat = body.current;
     if (!mat) return;
-    const { tint, roughness } = COLORWAYS[deviceColor];
-    mat.color.setRGB(tint[0], tint[1], tint[2]);
-    mat.roughness = roughness;
+    const cw = COLORWAYS[deviceColor];
+    mat.color.setRGB(cw.tint[0], cw.tint[1], cw.tint[2]);
+    mat.roughness = cw.roughness;
+    mat.transmission = cw.transmission;
+    mat.thickness = cw.thickness;
+    mat.clearcoat = cw.clearcoat;
+    mat.attenuationColor.set(cw.attenuation);
+    mat.attenuationDistance = cw.attenuationDistance;
+    mat.transparent = cw.transmission > 0;
+    // Toggling transmission changes the shader defines.
+    mat.needsUpdate = true;
   }, [deviceColor]);
 
   useFrame(() => {
