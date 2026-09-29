@@ -1,3 +1,4 @@
+import hmac
 import modal
 import os
 import tempfile
@@ -25,15 +26,19 @@ api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "fastapi[standard]"
 )
 
+# WEBHOOK_SECRET, shared with the Worker. It authenticates the Worker's calls
+# to this app and this app's callbacks to the Worker.
+webhook_secret = modal.Secret.from_name("stemplayer-webhook")
 
-def _report(webhook_url: str, webhook_secret: str, payload: dict) -> None:
+
+def _report(webhook_url: str, payload: dict) -> None:
     import requests
 
     try:
         requests.post(
             webhook_url,
             json=payload,
-            headers={"x-webhook-secret": webhook_secret},
+            headers={"x-webhook-secret": os.environ["WEBHOOK_SECRET"]},
             timeout=10,
         )
     except Exception:
@@ -46,21 +51,19 @@ def _report(webhook_url: str, webhook_secret: str, payload: dict) -> None:
     timeout=900,
     scaledown_window=300,
     memory=8192,
-    secrets=[modal.Secret.from_name("r2-creds")],
+    secrets=[modal.Secret.from_name("r2-creds"), webhook_secret],
 )
-def separate(
-    task_id: str, input_r2_key: str, webhook_url: str, webhook_secret: str
-):
+def separate(task_id: str, input_r2_key: str, webhook_url: str):
     """Download from R2, run Demucs, upload stems, report back via webhook.
 
-    R2 credentials come from Modal secrets, not the request body.
+    R2 credentials and the webhook secret come from Modal secrets, not the
+    request body.
     """
     import boto3
 
     def progress(pct: int):
         _report(
             webhook_url,
-            webhook_secret,
             {"task_id": task_id, "status": "processing", "progress": pct},
         )
 
@@ -119,7 +122,6 @@ def separate(
 
             _report(
                 webhook_url,
-                webhook_secret,
                 {"task_id": task_id, "status": "ready", "stems": stem_keys},
             )
 
@@ -128,33 +130,44 @@ def separate(
     except Exception as e:
         _report(
             webhook_url,
-            webhook_secret,
             {"task_id": task_id, "status": "error", "error": str(e)},
         )
         return {"task_id": task_id, "status": "error", "error": str(e)}
 
 
-@app.function(image=api_image)
-@modal.fastapi_endpoint(method="POST")
-def separate_api(item: dict):
+@app.function(image=api_image, secrets=[webhook_secret])
+@modal.asgi_app()
+def separate_api():
     """
-    Called by the Cloudflare Worker to enqueue a separation job.
+    Called by the Cloudflare Worker to enqueue a separation job, with
+    `Authorization: Bearer <WEBHOOK_SECRET>`.
 
     Payload from Worker:
     {
         "task_id": "uuid",
-        "input_r2_key": "uploads/uuid/song.mp3",
-        "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook",
-        "webhook_secret": "..."
+        "input_r2_key": "uploads/uuid/input.mp3",
+        "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook"
     }
 
     Spawns the GPU job and returns immediately — the Worker must not block
     for the full separation.
     """
-    separate.spawn(
-        item["task_id"],
-        item["input_r2_key"],
-        item["webhook_url"],
-        item["webhook_secret"],
-    )
-    return {"task_id": item["task_id"], "status": "queued"}
+    from fastapi import FastAPI, Header, HTTPException
+
+    web = FastAPI()
+
+    @web.post("/")
+    def enqueue(item: dict, authorization: str = Header("")):
+        expected = f"Bearer {os.environ['WEBHOOK_SECRET']}"
+        if not hmac.compare_digest(authorization.encode(), expected.encode()):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        try:
+            args = (item["task_id"], item["input_r2_key"], item["webhook_url"])
+        except KeyError as e:
+            raise HTTPException(status_code=400, detail=f"Missing {e}")
+
+        separate.spawn(*args)
+        return {"task_id": item["task_id"], "status": "queued"}
+
+    return web

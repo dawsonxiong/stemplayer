@@ -1,22 +1,28 @@
 @import "tailwindcss" source(".");
 
 @theme {
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-sans:
+    "Geist", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
   --color-bg-primary: #e8e3d4;
   --color-bg-secondary: #ddd8c8;
   --color-bg-surface: #d7d1c1;
+  /* Both text tones clear 4.5:1 on bg-primary and bg-secondary. */
   --color-text-primary: #514e4c;
-  --color-text-secondary: #7a756e;
-  --color-text-muted: #a09a90;
-  --color-device-body: #C9AB94;
-  --color-stem-vocals: #F5A623;
-  --color-stem-drums: #E74C3C;
-  --color-stem-bass: #3498DB;
-  --color-stem-other: #2ECC71;
-  --color-border: rgba(0, 0, 0, 0.08);
+  --color-text-secondary: #625d57;
+  --color-device-body: #aa8d80;
+  --color-border: rgba(0, 0, 0, 0.12);
+  --color-well: rgba(0, 0, 0, 0.1);
+
+  /* The device's own LED ramp runs cyan at the hub to magenta at the rim.
+     The raw values only glow; the -ink shades are dark enough for strokes,
+     fills and focus rings on the cream page. */
+  --color-led-cyan: #4cc2db;
+  --color-led-magenta: #da66d6;
+  --color-cyan-ink: #1c6f80;
+  --color-magenta-ink: #9a2c96;
 }
 
 html,
@@ -34,17 +40,28 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background: radial-gradient(
-    ellipse at 50% 40%,
-    transparent 40%,
-    rgba(0, 0, 0, 0.03) 100%
-  );
+  background: radial-gradient(ellipse at 50% 40%, transparent 40%, rgba(0, 0, 0, 0.03) 100%);
   pointer-events: none;
   z-index: 0;
 }
 
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-magenta-ink);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Smooth scrollbar */
@@ -59,7 +76,7 @@ body::before {
   border-radius: 3px;
 }
 
-/* Effects slider styling */
+/* Horizontal range inputs: effects and master volume */
 .slider-input {
   -webkit-appearance: none;
   appearance: none;
@@ -69,11 +86,13 @@ body::before {
     to right,
     var(--slider-color) 0%,
     var(--slider-color) var(--slider-pct),
-    rgba(0, 0, 0, 0.06) var(--slider-pct),
-    rgba(0, 0, 0, 0.06) 100%
+    var(--color-well) var(--slider-pct),
+    var(--color-well) 100%
   );
-  outline: none;
   cursor: pointer;
+}
+.slider-input:focus-visible {
+  outline-offset: 6px;
 }
 .slider-input::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -81,7 +100,6 @@ body::before {
   height: 12px;
   border-radius: 50%;
   background: var(--slider-color);
-  box-shadow: 0 0 6px var(--slider-color);
   cursor: pointer;
 }
 .slider-input::-moz-range-thumb {
@@ -89,7 +107,28 @@ body::before {
   height: 12px;
   border-radius: 50%;
   background: var(--slider-color);
-  box-shadow: 0 0 6px var(--slider-color);
   border: none;
   cursor: pointer;
+}
+
+/* Device loader: a pulse runs along the five LED dots. Delays are set per
+   dot inline. */
+@keyframes led-boot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+  }
+  25% {
+    opacity: 1;
+  }
+}
+.led-boot {
+  animation: led-boot 1200ms ease-in-out infinite both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .led-boot {
+    animation: none;
+    opacity: 0.85;
+  }
 }

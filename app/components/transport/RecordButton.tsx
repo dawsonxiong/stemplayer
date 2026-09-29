@@ -26,27 +26,28 @@ export function RecordButton({ audioEngine }: RecordButtonProps) {
     }
   }, [audioEngine, isRecording, setRecording, trackTitle]);
 
+  const label = isRecording ? "Stop recording and save mix" : "Record mix";
+
   return (
     <button
+      type="button"
       onClick={toggle}
       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
       style={{
-        backgroundColor: isRecording
-          ? "rgba(239,68,68,0.15)"
-          : "var(--color-bg-secondary)",
-        border: `1px solid ${isRecording ? "rgba(239,68,68,0.3)" : "var(--color-border)"}`,
+        backgroundColor: "var(--color-bg-primary)",
+        border: `1px solid ${isRecording ? "var(--color-magenta-ink)" : "var(--color-border)"}`,
       }}
-      aria-label={isRecording ? "Stop recording" : "Record mix"}
+      aria-label={label}
+      aria-pressed={isRecording}
+      title={label}
     >
       {isRecording ? (
-        // Stop icon (square)
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="#ef4444">
-          <rect x="2" y="2" width="10" height="10" rx="1.5" />
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+          <rect x="2" y="2" width="10" height="10" rx="1.5" fill="var(--color-magenta-ink)" />
         </svg>
       ) : (
-        // Record icon (circle)
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="var(--color-text-secondary)">
-          <circle cx="7" cy="7" r="5" />
+        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+          <circle cx="7" cy="7" r="5" fill="var(--color-magenta-ink)" />
         </svg>
       )}
     </button>

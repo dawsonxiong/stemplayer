@@ -7,21 +7,26 @@ export function UploadProgress() {
   if (status !== "uploading") return null;
 
   return (
-    <div className="flex w-full max-w-md flex-col items-center gap-2 px-4">
+    <div className="flex w-full flex-col items-center gap-2">
       <div
+        role="progressbar"
+        aria-label="Upload"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress)}
         className="h-1 w-full overflow-hidden rounded-full"
-        style={{ backgroundColor: "rgba(255,255,255,0.08)" }}
+        style={{ backgroundColor: "var(--color-well)" }}
       >
         <div
           className="h-full rounded-full transition-[width] duration-200"
           style={{
             width: `${progress}%`,
-            backgroundColor: "var(--color-stem-vocals)",
+            backgroundColor: "var(--color-text-primary)",
           }}
         />
       </div>
-      <span className="text-xs text-[var(--color-text-secondary)]">
-        Uploading{progress > 0 ? ` ${Math.round(progress)}%` : "..."}
+      <span className="text-xs tabular-nums text-[var(--color-text-secondary)]">
+        {progress > 0 ? `${Math.round(progress)}% uploaded` : "Starting upload"}
       </span>
     </div>
   );

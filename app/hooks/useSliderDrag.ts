@@ -6,7 +6,7 @@ import type { StemName } from "~/lib/constants";
 export function useSliderDrag(
   stemName: StemName,
   audioEngine: AudioEngine | null,
-  sliderRef: React.RefObject<HTMLDivElement | null>
+  sliderRef: React.RefObject<HTMLDivElement | null>,
 ) {
   const isDragging = useRef(false);
   const setVolume = usePlayerStore((s) => s.setVolume);
@@ -25,7 +25,7 @@ export function useSliderDrag(
         navigator.vibrate(3);
       }
     },
-    [stemName, audioEngine, setVolume, sliderRef]
+    [stemName, audioEngine, setVolume, sliderRef],
   );
 
   const handlePointerDown = useCallback(
@@ -34,7 +34,7 @@ export function useSliderDrag(
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       updateVolume(e.clientY);
     },
-    [updateVolume]
+    [updateVolume],
   );
 
   const handlePointerMove = useCallback(
@@ -42,7 +42,7 @@ export function useSliderDrag(
       if (!isDragging.current) return;
       updateVolume(e.clientY);
     },
-    [updateVolume]
+    [updateVolume],
   );
 
   const handlePointerUp = useCallback(() => {

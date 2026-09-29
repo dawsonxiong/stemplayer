@@ -1,5 +1,5 @@
 import type { Route } from "./+types/api.stems.$taskId";
-import { AwsClient } from "aws4fetch";
+import { generatePresignedUrl } from "~/lib/utils/presigned";
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env;
@@ -19,23 +19,15 @@ export async function loader({ params, context }: Route.LoaderArgs) {
     return Response.json({ error: "Stems not ready" }, { status: 404 });
   }
 
-  // Generate presigned GET URLs for each stem
-  const r2 = new AwsClient({
-    accessKeyId: env.R2_ACCESS_KEY_ID,
-    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+  const entries = await Promise.all(
+    Object.entries(data.stems).map(
+      async ([stem, key]) =>
+        [stem, await generatePresignedUrl({ env, key, expiresIn: 7200 })] as const,
+    ),
+  );
+
+  return Response.json({
+    stems: Object.fromEntries(entries),
+    title: data.filename,
   });
-
-  const urls: Record<string, string> = {};
-
-  for (const [stem, key] of Object.entries(data.stems)) {
-    const url = new URL(
-      `${env.R2_PUBLIC_ENDPOINT}/stem-player-audio/${key}`
-    );
-    const signed = await r2.sign(new Request(url), {
-      aws: { signQuery: true },
-    } as any);
-    urls[stem] = signed.url;
-  }
-
-  return Response.json({ stems: urls, title: data.filename });
 }

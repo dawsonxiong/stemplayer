@@ -60,12 +60,7 @@ export class MixRecorder {
   }
 
   private getSupportedMimeType(): string {
-    const types = [
-      "audio/webm;codecs=opus",
-      "audio/webm",
-      "audio/ogg;codecs=opus",
-      "audio/mp4",
-    ];
+    const types = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) return type;
     }

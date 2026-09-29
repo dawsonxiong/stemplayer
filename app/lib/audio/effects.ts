@@ -18,11 +18,7 @@ export class EffectsChain {
   }
 
   /** Create an effects chain for a stem, inserted between gain and analyser */
-  createChain(
-    stemName: StemName,
-    input: GainNode,
-    output: AnalyserNode
-  ): void {
+  createChain(stemName: StemName, input: GainNode, output: AnalyserNode): void {
     // Disconnect direct path
     input.disconnect(output);
 
@@ -66,11 +62,12 @@ export class EffectsChain {
     this.chains.set(stemName, { delay, feedback, wet, dry, filter });
   }
 
-  engage(): void {
+  /** Fades in at the caller's mix so the Mix slider matches what is heard. */
+  engage(wetAmount: number): void {
     this.engaged = true;
     for (const [, chain] of this.chains) {
-      chain.dry.gain.linearRampToValueAtTime(0.6, this.ctx.currentTime + 0.1);
-      chain.wet.gain.linearRampToValueAtTime(0.5, this.ctx.currentTime + 0.1);
+      chain.dry.gain.linearRampToValueAtTime(1 - wetAmount * 0.5, this.ctx.currentTime + 0.1);
+      chain.wet.gain.linearRampToValueAtTime(wetAmount, this.ctx.currentTime + 0.1);
     }
   }
 
@@ -88,10 +85,7 @@ export class EffectsChain {
 
   setEchoTime(time: number): void {
     for (const [, chain] of this.chains) {
-      chain.delay.delayTime.linearRampToValueAtTime(
-        time,
-        this.ctx.currentTime + 0.05
-      );
+      chain.delay.delayTime.linearRampToValueAtTime(time, this.ctx.currentTime + 0.05);
     }
   }
 
@@ -99,10 +93,7 @@ export class EffectsChain {
     // Clamp to < 1 to prevent infinite feedback
     const clamped = Math.min(amount, 0.85);
     for (const [, chain] of this.chains) {
-      chain.feedback.gain.linearRampToValueAtTime(
-        clamped,
-        this.ctx.currentTime + 0.05
-      );
+      chain.feedback.gain.linearRampToValueAtTime(clamped, this.ctx.currentTime + 0.05);
     }
   }
 
@@ -112,21 +103,15 @@ export class EffectsChain {
     for (const [, chain] of this.chains) {
       chain.filter.frequency.linearRampToValueAtTime(
         Math.min(freq, 20000),
-        this.ctx.currentTime + 0.05
+        this.ctx.currentTime + 0.05,
       );
     }
   }
 
   setWetDryMix(wetAmount: number): void {
     for (const [, chain] of this.chains) {
-      chain.wet.gain.linearRampToValueAtTime(
-        wetAmount,
-        this.ctx.currentTime + 0.05
-      );
-      chain.dry.gain.linearRampToValueAtTime(
-        1 - wetAmount * 0.5,
-        this.ctx.currentTime + 0.05
-      );
+      chain.wet.gain.linearRampToValueAtTime(wetAmount, this.ctx.currentTime + 0.05);
+      chain.dry.gain.linearRampToValueAtTime(1 - wetAmount * 0.5, this.ctx.currentTime + 0.05);
     }
   }
 

@@ -1,4 +1,15 @@
-import { POLL_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
+import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
+
+/** An error whose message is written for the person using the app (a size
+ *  limit, the hourly cap) rather than for a developer. */
+export class UserFacingError extends Error {}
+
+/** Client errors carry a message meant for the user; server errors do not. */
+async function failure(res: Response, fallback: string): Promise<Error> {
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (res.status < 500 && body.error) return new UserFacingError(body.error);
+  return new Error(body.error || `${fallback} (${res.status})`);
+}
 
 export async function requestUploadUrl(file: File) {
   const res = await fetch("/api/upload", {
@@ -10,17 +21,14 @@ export async function requestUploadUrl(file: File) {
       fileSize: file.size,
     }),
   });
-  if (!res.ok) {
-    const err = (await res.json()) as { error?: string };
-    throw new Error(err.error || "Upload request failed");
-  }
+  if (!res.ok) throw await failure(res, "Upload request failed");
   return res.json() as Promise<{ taskId: string; uploadUrl: string }>;
 }
 
 export async function uploadFileToR2(
   uploadUrl: string,
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
 ): Promise<void> {
   const xhr = new XMLHttpRequest();
 
@@ -47,10 +55,7 @@ export async function triggerSeparation(taskId: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ taskId }),
   });
-  if (!res.ok) {
-    const err = (await res.json()) as { error?: string };
-    throw new Error(err.error || "Failed to start separation");
-  }
+  if (!res.ok) throw await failure(res, "Failed to start separation");
   return res.json();
 }
 
@@ -63,14 +68,19 @@ interface JobStatus {
 
 export async function pollStatus(
   taskId: string,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
 ): Promise<JobStatus> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
+  let interval = POLL_INTERVAL_MS;
 
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    await new Promise((r) => setTimeout(r, interval));
+    interval = Math.min(interval * 1.25, POLL_MAX_INTERVAL_MS);
 
     const res = await fetch(`/api/status/${taskId}`);
+    // KV is eventually consistent: a fresh key can 404 for a moment.
+    if (res.status === 404) continue;
+    if (!res.ok) throw new Error(`Status check failed (${res.status})`);
     const data = (await res.json()) as JobStatus;
 
     if (data.status === "ready") return data;
@@ -80,7 +90,7 @@ export async function pollStatus(
     if (typeof data.progress === "number") onProgress?.(data.progress);
   }
 
-  throw new Error("Separation timed out. Try a shorter track.");
+  throw new UserFacingError("Separating took too long. Try a shorter song.");
 }
 
 export async function fetchStemUrls(taskId: string) {

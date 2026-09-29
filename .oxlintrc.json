@@ -14,7 +14,7 @@
     "typescript/no-explicit-any": "error",
     "no-await-in-loop": "off",
     "react/react-in-jsx-scope": "off",
-    "no-underscore-dangle": ["warn", { "allow": ["_effects", "_recorder"] }]
+    "no-underscore-dangle": ["warn", { "allow": ["_effects", "_recorder", "_masterVolume"] }]
   },
   "overrides": [
     {

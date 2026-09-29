@@ -1,11 +1,13 @@
-# Copy to .dev.vars for local development (`npm run dev`).
-# In production these are set with: npx wrangler secret put <NAME>
+# `pnpm dev` loads these from 1Password (see .env.op), so this file is only
+# needed for `pnpm dev:ui` or if you'd rather keep a local copy in .dev.vars.
+# In production these are set with: pnpm wrangler secret put <NAME>
 
 # R2 API token with Object Read & Write on stem-player-audio.
 # Cloudflare dashboard → R2 → Manage API tokens.
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 
-# Shared secret the Modal job sends back as the x-webhook-secret header.
-# Must match the `webhook_secret` in the Modal `r2-creds` flow — any random string.
+# Shared with Modal: the Worker sends it as a bearer token to start a job, and
+# Modal sends it back as the x-webhook-secret header. Must match WEBHOOK_SECRET
+# in the Modal secret `stemplayer-webhook` (1Password: Stem Player vault, see .env.op).
 WEBHOOK_SECRET=

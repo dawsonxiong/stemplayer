@@ -10,22 +10,28 @@
   "r2_buckets": [
     {
       "binding": "AUDIO_BUCKET",
-      "bucket_name": "stem-player-audio"
-    }
+      "bucket_name": "stem-player-audio",
+    },
   ],
 
   // KV namespace for job status tracking
   "kv_namespaces": [
     {
       "binding": "JOBS",
-      "id": "fb452fa6ee744fea9dc76d2d48c4637f"
-    }
+      "id": "fb452fa6ee744fea9dc76d2d48c4637f",
+    },
   ],
+
+  // Declaring the secrets makes local dev read them from process.env, which
+  // `pnpm dev` fills from 1Password via `op run`, and warns if one is missing.
+  "secrets": {
+    "required": ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "WEBHOOK_SECRET"],
+  },
 
   "vars": {
     "MODAL_ENDPOINT": "https://dawsonxiong--stem-demucs-separate-api.modal.run",
-    "R2_PUBLIC_ENDPOINT": "https://28cf8412596e686a740a117e47df06c4.r2.cloudflarestorage.com"
-  }
+    "R2_PUBLIC_ENDPOINT": "https://28cf8412596e686a740a117e47df06c4.r2.cloudflarestorage.com",
+  },
 
   // Secrets (set via: npx wrangler secret put <NAME>):
   // - R2_ACCESS_KEY_ID

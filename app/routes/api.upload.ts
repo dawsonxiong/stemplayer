@@ -1,6 +1,8 @@
 import type { Route } from "./+types/api.upload";
-import { AwsClient } from "aws4fetch";
 import { MAX_FILE_SIZE_MB, ACCEPTED_FORMATS } from "~/lib/constants";
+import { generatePresignedUrl } from "~/lib/utils/presigned";
+
+const EXTENSION = /\.(mp3|wav|flac|ogg|aac|m4a)$/i;
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env;
@@ -10,40 +12,27 @@ export async function action({ request, context }: Route.ActionArgs) {
     fileSize: number;
   };
 
-  if (
-    !ACCEPTED_FORMATS.includes(contentType) &&
-    !filename.match(/\.(mp3|wav|flac|ogg|aac|m4a)$/i)
-  ) {
+  const ext = filename.match(EXTENSION)?.[0].toLowerCase();
+  if (!ACCEPTED_FORMATS.includes(contentType) && !ext) {
     return Response.json({ error: "Unsupported format" }, { status: 400 });
   }
 
-  if (fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
-    return Response.json(
-      { error: `File too large (${MAX_FILE_SIZE_MB}MB max)` },
-      { status: 400 }
-    );
+  if (!(fileSize > 0) || fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
+    return Response.json({ error: `File too large (${MAX_FILE_SIZE_MB}MB max)` }, { status: 400 });
   }
 
   const taskId = crypto.randomUUID();
-  const r2Key = `uploads/${taskId}/${filename}`;
+  // The original name is kept in KV for the title. It never goes in the key,
+  // where spaces, '#' or '?' would break the signed URL.
+  const r2Key = `uploads/${taskId}/input${ext ?? ""}`;
 
-  // Generate presigned PUT URL for direct browser → R2 upload
-  const r2 = new AwsClient({
-    accessKeyId: env.R2_ACCESS_KEY_ID,
-    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+  const uploadUrl = await generatePresignedUrl({
+    env,
+    key: r2Key,
+    method: "PUT",
+    contentType,
+    expiresIn: 3600,
   });
-
-  const url = new URL(
-    `${env.R2_PUBLIC_ENDPOINT}/stem-player-audio/${r2Key}`
-  );
-
-  const signed = await r2.sign(
-    new Request(url, {
-      method: "PUT",
-      headers: { "Content-Type": contentType },
-    }),
-    { aws: { signQuery: true } } as any
-  );
 
   // Save job metadata to KV (auto-expires in 14 days)
   await env.JOBS.put(
@@ -54,8 +43,8 @@ export async function action({ request, context }: Route.ActionArgs) {
       r2Key,
       createdAt: Date.now(),
     }),
-    { expirationTtl: 86400 * 14 }
+    { expirationTtl: 86400 * 14 },
   );
 
-  return Response.json({ taskId, uploadUrl: signed.url });
+  return Response.json({ taskId, uploadUrl });
 }

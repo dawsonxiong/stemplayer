@@ -5,7 +5,6 @@ import { useAnimationFrame } from "~/hooks/useAnimationFrame";
 import type { AudioEngine } from "~/lib/audio/engine";
 import { DeviceScene } from "./DeviceScene";
 import { Slider } from "./Slider";
-import { ProcessingAnimation } from "./ProcessingAnimation";
 
 interface DeviceProps {
   audioEngine: AudioEngine | null;
@@ -40,7 +39,7 @@ export function Device({ audioEngine }: DeviceProps) {
       }
       setAmplitudes(next as Record<StemName, number>);
     }, [audioEngine]),
-    isPlaying && status === "ready"
+    isPlaying && status === "ready",
   );
 
   const handleStemVolume = useCallback(
@@ -48,12 +47,12 @@ export function Device({ audioEngine }: DeviceProps) {
       usePlayerStore.getState().setVolume(stem, value);
       audioEngine?.setVolume(stem, value);
     },
-    [audioEngine]
+    [audioEngine],
   );
 
   const handleTogglePlay = useCallback(() => {
     const store = usePlayerStore.getState();
-    if (!audioEngine || store.status !== "ready") return;
+    if (!audioEngine || store.status !== "ready" || !store.isOn) return;
     if (audioEngine.isPlaying) {
       audioEngine.pause();
       store.setPlaying(false);
@@ -70,7 +69,7 @@ export function Device({ audioEngine }: DeviceProps) {
       store.setMasterVolume(next);
       audioEngine?.setMasterVolume(next);
     },
-    [audioEngine]
+    [audioEngine],
   );
 
   const handleTogglePower = useCallback(() => {
@@ -84,41 +83,19 @@ export function Device({ audioEngine }: DeviceProps) {
     }
   }, [audioEngine]);
 
-  const isProcessing = status === "processing";
-
   return (
-    <div className="flex w-full flex-col items-center gap-4">
-      {/* 3D Device */}
-      {isProcessing ? (
-        <div className="flex items-center justify-center" style={{ height: "clamp(340px, 45vw, 480px)" }}>
-          <div
-            className="relative flex items-center justify-center rounded-full"
-            style={{
-              width: "260px",
-              height: "260px",
-              background:
-                "radial-gradient(ellipse at 40% 35%, #DDD0B8 0%, #D4C5A9 40%, #C4B494 100%)",
-              boxShadow:
-                "0 20px 60px rgba(0,0,0,0.4), 0 8px 24px rgba(0,0,0,0.25)",
-            }}
-          >
-            <ProcessingAnimation />
-          </div>
-        </div>
-      ) : (
-        <DeviceScene
-          volumes={volumes}
-          amplitudes={amplitudes}
-          onStemVolume={handleStemVolume}
-          onTogglePlay={handleTogglePlay}
-          onVolumeStep={handleVolumeStep}
-          onTogglePower={handleTogglePower}
-        />
-      )}
+    <div className="flex w-full flex-col items-center gap-5">
+      <DeviceScene
+        volumes={volumes}
+        amplitudes={amplitudes}
+        onStemVolume={handleStemVolume}
+        onTogglePlay={handleTogglePlay}
+        onVolumeStep={handleVolumeStep}
+        onTogglePower={handleTogglePower}
+      />
 
-      {/* Volume sliders below the 3D device */}
       {status === "ready" && (
-        <div className="flex gap-6">
+        <div role="group" aria-label="Stem levels" className="relative z-10 flex gap-7">
           {stemNames.map((name) => (
             <Slider
               key={name}

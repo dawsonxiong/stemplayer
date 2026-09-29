@@ -1,5 +1,7 @@
 import { useEffect } from "react";
 import type { AudioEngine } from "~/lib/audio/engine";
+import { cycleLoop } from "~/lib/loop";
+import { toggleEffects } from "~/lib/effects";
 import { usePlayerStore } from "~/lib/store";
 import type { StemName } from "~/lib/constants";
 
@@ -13,15 +15,19 @@ const STEM_KEYS: Record<string, StemName> = {
 export function useKeyboardShortcuts(audioEngine: AudioEngine | null) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      // Ignore if typing in an input
+      // Form controls own their keys; a focused button owns Space and Enter.
       if (
         e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
       )
+        return;
+      if (e.target instanceof HTMLButtonElement && (e.code === "Space" || e.key === "Enter"))
         return;
 
       const store = usePlayerStore.getState();
-      if (store.status !== "ready") return;
+      // Off means inert, like the hardware: no playback, mixing or seeking.
+      if (store.status !== "ready" || !store.isOn) return;
 
       // Space — play/pause
       if (e.code === "Space") {
@@ -51,31 +57,23 @@ export function useKeyboardShortcuts(audioEngine: AudioEngine | null) {
       // E — toggle effects
       if (e.key === "e" || e.key === "E") {
         e.preventDefault();
-        const effects = audioEngine?.effects;
-        if (!effects) return;
-        if (store.effectsMode) {
-          effects.bypass();
-        } else {
-          effects.engage();
-        }
-        store.toggleEffectsMode();
+        toggleEffects(audioEngine);
+        return;
+      }
+
+      // L — loop in / out / clear
+      if (e.key === "l" || e.key === "L") {
+        e.preventDefault();
+        cycleLoop(audioEngine);
         return;
       }
 
       // Left/Right arrow — seek
-      if (e.key === "ArrowLeft") {
+      if (audioEngine && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
-        const time = Math.max(0, audioEngine!.currentTime - 5);
-        audioEngine?.seek(time);
-        store.setCurrentTime(time);
-      }
-      if (e.key === "ArrowRight") {
-        e.preventDefault();
-        const time = Math.min(
-          audioEngine!.duration,
-          audioEngine!.currentTime + 5
-        );
-        audioEngine?.seek(time);
+        const step = e.key === "ArrowLeft" ? -5 : 5;
+        const time = Math.max(0, Math.min(audioEngine.duration, audioEngine.currentTime + step));
+        audioEngine.seek(time);
         store.setCurrentTime(time);
       }
     }

@@ -1,18 +1,20 @@
-// LED colors: warm white/cream (matching the real Stem Player's default state)
-// The real device uses warm white LEDs that glow through silicone
-// Per-track color palettes (pink/blue etc.) vary by song
 export const STEMS = {
-  vocals: { label: "Vocals", colour: "#F0D8B8", colourLight: "#F8E8D0", index: 0 },
-  drums: { label: "Drums", colour: "#ECD0B0", colourLight: "#F4E0C8", index: 1 },
-  bass: { label: "Bass", colour: "#E8CCB0", colourLight: "#F0DCC8", index: 2 },
-  other: { label: "Other", colour: "#E4C8A8", colourLight: "#ECD8C0", index: 3 },
+  vocals: { label: "Vocals", index: 0 },
+  drums: { label: "Drums", index: 1 },
+  bass: { label: "Bass", index: 2 },
+  other: { label: "Other", index: 3 },
 } as const;
+
+// The device's LEDs, hub to rim. The baked map is a continuous
+// cyan→blue→white→lavender→magenta ramp and every groove shows the same one, so
+// colour says how loud a stem is, not which stem it is.
+export const LED_PALETTE = ["#4CC2DB", "#9EC2DE", "#D1E5F5", "#C79AD9", "#DA66D6"] as const;
 
 export type StemName = keyof typeof STEMS;
 
 // The three colourways the real product ships in.
 export const DEVICE_COLORS = {
-  tan: { label: "Tan", swatch: "#C09B87" },
+  tan: { label: "Tan", swatch: "#AA8D80" },
   bao: { label: "Bao", swatch: "#E4E3DE" },
   clear: { label: "Clear", swatch: "#9B9791" },
 } as const;
@@ -37,5 +39,7 @@ export const ACCEPTED_FORMATS = [
   "audio/x-m4a",
 ];
 export const POLL_INTERVAL_MS = 2000;
+export const POLL_MAX_INTERVAL_MS = 5000;
 export const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 export const AUTO_DELETE_DAYS = 14;
+export const SEPARATIONS_PER_HOUR = 5;

@@ -1,5 +1,6 @@
 import type { AudioEngine } from "~/lib/audio/engine";
 import { usePlayerStore } from "~/lib/store";
+import { LoopButton } from "./LoopButton";
 import { PlayPauseButton } from "./PlayPauseButton";
 import { RecordButton } from "./RecordButton";
 import { Scrubber } from "./Scrubber";
@@ -25,6 +26,7 @@ export function TransportBar({ audioEngine }: TransportBarProps) {
       <PlayPauseButton audioEngine={audioEngine} />
       <Scrubber audioEngine={audioEngine} />
       <TimeDisplay />
+      <LoopButton audioEngine={audioEngine} />
       <RecordButton audioEngine={audioEngine} />
     </div>
   );

@@ -21,12 +21,12 @@ export function DriftMeter({ audioEngine }: DriftMeterProps) {
       if (now > peak.current) peak.current = now;
       setReading({ now, peak: peak.current });
     }, [audioEngine]),
-    isPlaying
+    isPlaying,
   );
 
   return (
-    <div className="text-center text-[10px] tracking-[0.04em] text-[var(--color-text-muted)]">
-      drift {reading.now.toFixed(1)}ms · peak {reading.peak.toFixed(1)}ms
+    <div className="text-center text-[10px] tracking-[0.04em] text-[var(--color-text-secondary)]">
+      drift {reading.now.toFixed(1)}ms, peak {reading.peak.toFixed(1)}ms
     </div>
   );
 }

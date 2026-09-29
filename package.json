@@ -2,12 +2,12 @@
   "name": "stemplayer",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "react-router build",
     "cf-typegen": "wrangler types",
     "deploy": "pnpm build && wrangler deploy",
-    "dev": "react-router dev",
+    "dev": "node scripts/dev.mjs",
+    "dev:ui": "react-router dev",
     "postinstall": "pnpm cf-typegen",
     "preview": "pnpm build && vite preview",
     "typecheck": "pnpm cf-typegen && react-router typegen && tsc -b",
@@ -42,5 +42,6 @@
     "vite": "^7.1.7",
     "vite-tsconfig-paths": "^5.1.4",
     "wrangler": "^4.75.0"
-  }
+  },
+  "packageManager": "pnpm@9.15.9"
 }

@@ -29,7 +29,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#0A0A0A" />
+        <meta name="theme-color" content="#E8E3D4" />
         <Meta />
         <Links />
       </head>
@@ -54,9 +54,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   if (isRouteErrorResponse(error)) {
     message = error.status === 404 ? "404" : "Error";
     details =
-      error.status === 404
-        ? "The requested page could not be found."
-        : error.statusText || details;
+      error.status === 404 ? "The requested page could not be found." : error.statusText || details;
   } else if (import.meta.env.DEV && error && error instanceof Error) {
     details = error.message;
     stack = error.stack;
@@ -65,9 +63,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <div className="text-center">
-        <h1 className="text-4xl font-bold text-[var(--color-text-primary)]">
-          {message}
-        </h1>
+        <h1 className="text-4xl font-bold text-[var(--color-text-primary)]">{message}</h1>
         <p className="mt-2 text-[var(--color-text-secondary)]">{details}</p>
         {stack && (
           <pre className="mt-4 max-w-2xl overflow-x-auto rounded bg-[var(--color-bg-secondary)] p-4 text-left text-sm">

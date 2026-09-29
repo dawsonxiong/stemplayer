@@ -17,6 +17,9 @@ export class AudioEngine {
   private _recorder: MixRecorder | null = null;
   /** Survives the gain node, which only exists once a track has been loaded. */
   private _masterVolume = 1;
+  private loopTimer: ReturnType<typeof setInterval> | null = null;
+  /** Called when playback reaches the end of the track. */
+  onEnded: (() => void) | null = null;
 
   private getContext(): AudioContext {
     if (!this.ctx) {
@@ -50,16 +53,19 @@ export class AudioEngine {
             () =>
               reject(
                 new Error(
-                  `Could not load ${name} stem: ${audio.error?.message ?? "unknown error"}`
-                )
+                  `Could not load ${name} stem: ${audio.error?.message ?? "unknown error"}`,
+                ),
               ),
-            { once: true }
+            { once: true },
           );
         });
 
         return [name as StemName, audio] as const;
-      })
+      }),
     );
+
+    // Stems share a length, so the first one speaks for the track.
+    entries[0]?.[1].addEventListener("ended", () => this.onEnded?.());
 
     for (const [name, audio] of entries) {
       const source = ctx.createMediaElementSource(audio);
@@ -109,15 +115,24 @@ export class AudioEngine {
     stem.gain.gain.linearRampToValueAtTime(value, ctx.currentTime + 0.02);
   }
 
+  /** Jump back to `start` whenever playback reaches `end`. A timer rather than
+   *  rAF: rAF stops in background tabs, while timers in audible tabs keep
+   *  running. Pass nulls to clear. */
+  setLoop(start: number | null, end: number | null): void {
+    if (this.loopTimer !== null) clearInterval(this.loopTimer);
+    this.loopTimer = null;
+    if (start === null || end === null) return;
+    this.loopTimer = setInterval(() => {
+      if (this.currentTime >= end) this.seek(start);
+    }, 20);
+  }
+
   setMasterVolume(value: number): void {
     // Remember it either way: the rocker can be used before a track is loaded,
     // and the gain node does not exist until then.
     this._masterVolume = value;
     if (!this.masterGain || !this.ctx) return;
-    this.masterGain.gain.linearRampToValueAtTime(
-      value,
-      this.ctx.currentTime + 0.02
-    );
+    this.masterGain.gain.linearRampToValueAtTime(value, this.ctx.currentTime + 0.02);
   }
 
   getAnalyserData(stemName: StemName): Uint8Array {
@@ -170,6 +185,7 @@ export class AudioEngine {
   }
 
   dispose(): void {
+    this.setLoop(null, null);
     this._effects?.dispose();
     this._effects = null;
     this._recorder = null;

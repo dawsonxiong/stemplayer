@@ -5,6 +5,9 @@ import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
+  // Modal's webhook reaches the dev server through a Cloudflare quick tunnel
+  // (scripts/dev.mjs), whose Host header Vite would otherwise reject.
+  server: { allowedHosts: [".trycloudflare.com"] },
   plugins: [
     cloudflare({ viteEnvironment: { name: "ssr" } }),
     tailwindcss(),

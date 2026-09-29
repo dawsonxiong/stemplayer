@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AudioEngine } from "~/lib/audio/engine";
+import { usePlayerStore } from "~/lib/store";
 
 export function useAudioEngine() {
   const engineRef = useRef<AudioEngine | null>(null);
@@ -7,6 +8,7 @@ export function useAudioEngine() {
 
   useEffect(() => {
     const e = new AudioEngine();
+    e.onEnded = () => usePlayerStore.getState().setPlaying(false);
     engineRef.current = e;
     setEngine(e);
 

@@ -2,10 +2,13 @@ import { useCallback, useRef, useState } from "react";
 import type { AudioEngine } from "~/lib/audio/engine";
 import { usePlayerStore } from "~/lib/store";
 import { useAnimationFrame } from "~/hooks/useAnimationFrame";
+import { formatTime } from "~/lib/utils/format";
 
 interface ScrubberProps {
   audioEngine: AudioEngine | null;
 }
+
+const KEY_STEP_SECONDS = 5;
 
 export function Scrubber({ audioEngine }: ScrubberProps) {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
@@ -13,6 +16,7 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
   const setDuration = usePlayerStore((s) => s.setDuration);
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
+  const loop = usePlayerStore((s) => s.loop);
 
   const trackRef = useRef<HTMLDivElement>(null);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -24,7 +28,17 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
       setCurrentTime(audioEngine.currentTime);
       setDuration(audioEngine.duration);
     }, [audioEngine, isSeeking, setCurrentTime, setDuration]),
-    isPlaying
+    isPlaying,
+  );
+
+  const seekTo = useCallback(
+    (time: number) => {
+      if (!audioEngine) return;
+      const clamped = Math.max(0, Math.min(audioEngine.duration, time));
+      audioEngine.seek(clamped);
+      setCurrentTime(clamped);
+    },
+    [audioEngine, setCurrentTime],
   );
 
   const seekFromPointer = useCallback(
@@ -32,20 +46,18 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
       if (!trackRef.current || !audioEngine) return;
       const rect = trackRef.current.getBoundingClientRect();
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      const time = ratio * audioEngine.duration;
-      audioEngine.seek(time);
-      setCurrentTime(time);
+      seekTo(ratio * audioEngine.duration);
     },
-    [audioEngine, setCurrentTime]
+    [audioEngine, seekTo],
   );
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
       setIsSeeking(true);
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
       seekFromPointer(e.clientX);
     },
-    [seekFromPointer]
+    [seekFromPointer],
   );
 
   const handlePointerMove = useCallback(
@@ -53,48 +65,89 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
       if (!isSeeking) return;
       seekFromPointer(e.clientX);
     },
-    [isSeeking, seekFromPointer]
+    [isSeeking, seekFromPointer],
   );
 
   const handlePointerUp = useCallback(() => {
     setIsSeeking(false);
   }, []);
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const step =
+        e.key === "ArrowLeft" || e.key === "ArrowDown"
+          ? -KEY_STEP_SECONDS
+          : e.key === "ArrowRight" || e.key === "ArrowUp"
+            ? KEY_STEP_SECONDS
+            : null;
+      let target: number | null = step === null ? null : currentTime + step;
+      if (e.key === "Home") target = 0;
+      if (e.key === "End") target = duration;
+      if (target === null) return;
+      e.preventDefault();
+      // The page-wide arrow shortcut would seek a second time.
+      e.stopPropagation();
+      seekTo(target);
+    },
+    [currentTime, duration, seekTo],
+  );
+
+  const pct = (t: number) => (duration > 0 ? (t / duration) * 100 : 0);
+  const progress = pct(currentTime);
 
   return (
+    // The visible track is 6px; the hit area around it is a comfortable 24px.
     <div
       ref={trackRef}
-      className="relative h-1.5 flex-1 cursor-pointer rounded-full select-none"
-      style={{
-        backgroundColor: "rgba(255,255,255,0.08)",
-        touchAction: "none",
-      }}
+      role="slider"
+      tabIndex={0}
+      aria-label="Seek"
+      aria-valuemin={0}
+      aria-valuemax={Math.round(duration)}
+      aria-valuenow={Math.round(currentTime)}
+      aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
+      className="group relative flex h-6 flex-1 cursor-pointer items-center rounded-full select-none"
+      style={{ touchAction: "none" }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onKeyDown={handleKeyDown}
     >
-      {/* Progress fill */}
       <div
-        className="absolute top-0 left-0 h-full rounded-full"
-        style={{
-          width: `${progress}%`,
-          backgroundColor: "var(--color-text-primary)",
-        }}
-      />
+        className="relative h-1.5 w-full rounded-full"
+        style={{ backgroundColor: "var(--color-well)" }}
+      >
+        {/* Loop region, or just its in point while the out point is pending */}
+        {loop.start !== null && (
+          <div
+            className="absolute -top-1 -bottom-1 rounded-sm"
+            style={{
+              left: `${pct(loop.start)}%`,
+              width: loop.end !== null ? `${pct(loop.end - loop.start)}%` : "2px",
+              backgroundColor: "var(--color-cyan-ink)",
+              opacity: 0.3,
+            }}
+          />
+        )}
 
-      {/* Scrub handle */}
-      <div
-        className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full"
-        style={{
-          left: `calc(${progress}% - 6px)`,
-          backgroundColor: "var(--color-text-primary)",
-          boxShadow: "0 0 6px rgba(0,0,0,0.5)",
-          opacity: isSeeking ? 1 : 0,
-          transition: "opacity 150ms",
-        }}
-      />
+        <div
+          className="absolute top-0 left-0 h-full rounded-full"
+          style={{
+            width: `${progress}%`,
+            backgroundColor: "var(--color-text-primary)",
+          }}
+        />
+
+        <div
+          className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          style={{
+            left: `calc(${progress}% - 6px)`,
+            backgroundColor: "var(--color-text-primary)",
+            opacity: isSeeking ? 1 : undefined,
+          }}
+        />
+      </div>
     </div>
   );
 }

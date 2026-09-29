@@ -1,30 +1,52 @@
+import { useCallback, useId } from "react";
+import type { AudioEngine } from "~/lib/audio/engine";
 import { usePlayerStore } from "~/lib/store";
 
-/** Output level, driven by the device's side rocker. */
-export function MasterVolume() {
+interface MasterVolumeProps {
+  audioEngine: AudioEngine | null;
+}
+
+/** Output level. The device's side rocker steps it too. */
+export function MasterVolume({ audioEngine }: MasterVolumeProps) {
   const masterVolume = usePlayerStore((s) => s.masterVolume);
+  const id = useId();
+
+  const handleChange = useCallback(
+    (value: number) => {
+      usePlayerStore.getState().setMasterVolume(value);
+      audioEngine?.setMasterVolume(value);
+    },
+    [audioEngine],
+  );
 
   return (
-    <div className="flex items-center justify-center gap-2">
-      <span className="text-[11px] tracking-[0.06em] text-[var(--color-text-muted)]">
-        Vol
-      </span>
-      <div
-        className="h-1 w-24 overflow-hidden rounded-full"
-        style={{ backgroundColor: "rgba(0,0,0,0.08)" }}
+    <div className="flex items-center gap-3">
+      <label htmlFor={id} className="text-xs text-[var(--color-text-secondary)]">
+        Volume
+      </label>
+      <input
+        id={id}
+        type="range"
+        min={0}
+        max={1}
+        step={0.01}
+        value={masterVolume}
+        aria-valuetext={`${Math.round(masterVolume * 100)}%`}
+        onChange={(e) => handleChange(parseFloat(e.target.value))}
+        className="slider-input w-24"
+        style={
+          {
+            "--slider-pct": `${masterVolume * 100}%`,
+            "--slider-color": "var(--color-text-primary)",
+          } as React.CSSProperties
+        }
+      />
+      <output
+        htmlFor={id}
+        className="w-7 text-right text-xs tabular-nums text-[var(--color-text-secondary)]"
       >
-        <div
-          className="h-full rounded-full"
-          style={{
-            width: `${masterVolume * 100}%`,
-            backgroundColor: "var(--color-text-secondary)",
-            transition: "width 120ms ease-out",
-          }}
-        />
-      </div>
-      <span className="w-8 text-[11px] tracking-[0.06em] text-[var(--color-text-muted)]">
         {Math.round(masterVolume * 100)}
-      </span>
+      </output>
     </div>
   );
 }

@@ -22,8 +22,8 @@ interface PlayerState {
   echo: { delayTime: number; feedback: number; wet: number };
   gate: { threshold: number; active: boolean };
 
-  // Loop
-  loop: { active: boolean; start: number; end: number };
+  // Loop. Only a start means the out point is still to be set.
+  loop: { start: number | null; end: number | null };
 
   // Recording
   isRecording: boolean;
@@ -68,9 +68,9 @@ const initialState = {
   duration: 0,
   volumes: { vocals: 1, drums: 1, bass: 1, other: 1 },
   effectsMode: false,
-  echo: { delayTime: 0.3, feedback: 0.4, wet: 0 },
+  echo: { delayTime: 0.3, feedback: 0.4, wet: 0.5 },
   gate: { threshold: 0, active: false },
-  loop: { active: false, start: 0, end: 0 },
+  loop: { start: null, end: null },
   isRecording: false,
   deviceColor: "tan" as const,
   masterVolume: 1,
@@ -80,8 +80,7 @@ const initialState = {
 export const usePlayerStore = create<PlayerState>((set) => ({
   ...initialState,
 
-  setVolume: (stem, value) =>
-    set((s) => ({ volumes: { ...s.volumes, [stem]: value } })),
+  setVolume: (stem, value) => set((s) => ({ volumes: { ...s.volumes, [stem]: value } })),
   setStatus: (status) => set({ status }),
   setPlaying: (isPlaying) => set({ isPlaying }),
   setCurrentTime: (currentTime) => set({ currentTime }),

@@ -1,11 +1,12 @@
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, ContactShadows, useGLTF } from "@react-three/drei";
-import { useEffect, useMemo, useRef } from "react";
+import { useReducedMotion } from "framer-motion";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import type { DeviceColor, StemName } from "~/lib/constants";
+import { LED_PALETTE, type DeviceColor, type StemName } from "~/lib/constants";
 import { usePlayerStore } from "~/lib/store";
+import { MODEL_URL } from "~/lib/model";
 
-const MODEL_URL = "/models/stemplayer.glb";
 useGLTF.preload(MODEL_URL);
 
 // Device half-height after the asset pipeline centres it on the origin.
@@ -20,10 +21,6 @@ const ARM_ORDER: StemName[] = ["bass", "other", "vocals", "drums"];
 // colour ramp if this is off, which reads as half-pink/half-white LEDs.
 const LED_R_MIN = 0.334;
 const LED_R_MAX = 0.735;
-
-// The baked map is a continuous cyan→blue→white→lavender→magenta ramp, so each
-// LED takes one solid colour sampled from its own stretch of that ramp.
-const LED_PALETTE = ["#4CC2DB", "#9EC2DE", "#D1E5F5", "#C79AD9", "#DA66D6"];
 
 // The GLB ships one baked-in tan body map, so every colourway is a multiplier
 // on it. These are LINEAR (Color.setRGB works in the linear working space),
@@ -45,7 +42,8 @@ interface Colorway {
 
 const COLORWAYS: Record<DeviceColor, Colorway> = {
   tan: {
-    tint: [1.24, 1.17, 1.12],
+    // Solved so the body map's flat tone (#b7967f) comes out as #aa8d80.
+    tint: [0.849, 0.873, 1.017],
     roughness: 0.62,
     transmission: 0,
     thickness: 0,
@@ -63,18 +61,35 @@ const COLORWAYS: Record<DeviceColor, Colorway> = {
     attenuationDistance: Infinity,
   },
   clear: {
-    // Neutralise the tan base map so the look comes from the light passing
-    // through rather than from the shell's own colour.
-    tint: [1.0, 1.5, 2.0],
-    roughness: 0.28,
-    transmission: 0.82,
-    thickness: 0.26,
-    clearcoat: 0.6,
-    // Light, barely-warm absorption over a long distance: smoked, not tinted.
-    attenuation: "#CFC9BA",
-    attenuationDistance: 1.8,
+    // The real Clear is frosted silicone, not glass: milky cool grey, with the
+    // board and ports reading only as soft shadows. High roughness blurs what
+    // is seen through it; matte, so almost no clearcoat.
+    tint: [1.12, 1.72, 2.4],
+    roughness: 0.86,
+    transmission: 0.45,
+    thickness: 1.0,
+    clearcoat: 0.1,
+    attenuation: "#C4C6C8",
+    attenuationDistance: 1.1,
   },
 };
+
+function applyColorway(mat: THREE.MeshPhysicalMaterial, color: DeviceColor) {
+  const cw = COLORWAYS[color];
+  mat.color.setRGB(cw.tint[0], cw.tint[1], cw.tint[2]);
+  mat.roughness = cw.roughness;
+  mat.transmission = cw.transmission;
+  mat.thickness = cw.thickness;
+  mat.clearcoat = cw.clearcoat;
+  mat.attenuationColor.set(cw.attenuation);
+  mat.attenuationDistance = cw.attenuationDistance;
+  // Transmission renders in its own pass and needs no blending. Marking it
+  // transparent alpha-blended the internals through the shell, sharp and
+  // unblurred, which read as glass rather than frosted silicone.
+  mat.transparent = false;
+  // Toggling transmission changes the shader defines.
+  mat.needsUpdate = true;
+}
 
 // Centre button edge sits at r=0.12 (dense vertex ring); padded for touch.
 const BUTTON_HIT_R = 0.16;
@@ -88,14 +103,22 @@ interface Props {
   onTogglePlay?: () => void;
   onVolumeStep?: (delta: number) => void;
   onTogglePower?: () => void;
+  /** The GPU dropped the context; the page swaps in a static device. */
+  onContextLost?: () => void;
+  /** The model has drawn a frame, so the loader can hand over. */
+  onReady?: () => void;
 }
 
-// The rocker's two halves, split at the midpoint between the embossed glyphs
-// ("+" at 3°, "−" at 29°). Angles stay signed (atan2 range) because the pad
-// straddles 0°. Stops short of the strap mount at 43-76°, which is not a
-// control; power lives on the centre button.
-const VOL_UP_ARC: [number, number] = [-11, 17];
-const VOL_DOWN_ARC: [number, number] = [17, 42];
+// The side rocker's pad, measured off the mesh's raised surface: a capsule
+// from -5° to 32° around the rim (signed atan2 angles, since it straddles 0°)
+// and ±0.075 either side of the equator. The hit area is that capsule plus a hair of slack, so a
+// press just outside the moulded outline doesn't count. The strap mount,
+// raised again from 39°, is not a control; power lives on the centre button.
+const ROCKER_DEG: [number, number] = [-5, 32];
+const ROCKER_HALF_H = 0.075;
+const ROCKER_SLACK = 0.008;
+// Split between the two halves, midway between the "+" (~1°) and "−" (~29°).
+const ROCKER_SPLIT_DEG = 15;
 
 // The real device powers on/off by holding the top button for a couple of
 // seconds; a short press is play/pause.
@@ -113,13 +136,16 @@ function zoneAt(p: THREE.Vector3): Zone | null {
 
   // Side rocker first — it straddles the equator, so it must be tested before
   // the top-face gate below.
-  if (rXZ > 0.88 && Math.abs(p.y) < 0.17) {
+  if (rXZ > 0.88 && Math.abs(p.y) < ROCKER_HALF_H + ROCKER_SLACK) {
     const deg = (Math.atan2(p.x, p.z) * 180) / Math.PI;
-    if (deg >= VOL_UP_ARC[0] && deg < VOL_UP_ARC[1]) {
-      return { kind: "volume", delta: 0.1 };
-    }
-    if (deg >= VOL_DOWN_ARC[0] && deg <= VOL_DOWN_ARC[1]) {
-      return { kind: "volume", delta: -0.1 };
+    // Distance to the capsule, measured along the rim surface: arc length
+    // around, height up. Its round ends are centred one half-height in.
+    const arc = (deg * Math.PI * rXZ) / 180;
+    const start = (ROCKER_DEG[0] * Math.PI * rXZ) / 180 + ROCKER_HALF_H;
+    const end = (ROCKER_DEG[1] * Math.PI * rXZ) / 180 - ROCKER_HALF_H;
+    const along = arc - Math.min(end, Math.max(start, arc));
+    if (Math.hypot(along, p.y) <= ROCKER_HALF_H + ROCKER_SLACK) {
+      return { kind: "volume", delta: deg < ROCKER_SPLIT_DEG ? 0.1 : -0.1 };
     }
   }
 
@@ -139,12 +165,35 @@ function zoneAt(p: THREE.Vector3): Zone | null {
   if (perp > GROOVE_HIT_W) return null;
   if (along < LED_R_MIN - 0.06 || along > LED_R_MAX + 0.06) return null;
 
-  const value = Math.min(
-    1,
-    Math.max(0, (along - LED_R_MIN) / (LED_R_MAX - LED_R_MIN))
-  );
+  const value = Math.min(1, Math.max(0, (along - LED_R_MIN) / (LED_R_MAX - LED_R_MIN)));
   return { kind: "groove", stem: ARM_ORDER[armF], value };
 }
+
+// The canvas runs this far past the scene's layout box, below the device.
+// That extra strip is where the fade happens, so at rest the fade only ever
+// covers the ground shadow and never the device itself. <ExtendedFrame> keeps
+// the camera framed on the original box, so the device doesn't move.
+const EXTEND = 0.35;
+const SCENE_HEIGHT = "clamp(340px, 45vw, 480px)";
+
+/** Eased fade between two points of the canvas height, as mask stops. A
+ *  linear ramp has an abrupt start and end, and the eye reads both as faint
+ *  lines; cosine easing has zero slope at both ends, so there's no edge. */
+function easedFade(from: number, to: number) {
+  return Array.from({ length: 13 }, (_, i) => {
+    const t = i / 12;
+    const alpha = (1 + Math.cos(Math.PI * t)) / 2;
+    return `rgba(0,0,0,${alpha.toFixed(3)}) ${(from + (to - from) * t).toFixed(1)}%`;
+  });
+}
+
+const BOTTOM_FROM = 100 / (1 + EXTEND) - 2;
+// Bottom: fade out across the extra strip. Top: a short fade so a zoomed-in
+// device meets the heading softly instead of in a hard straight cut.
+const EDGE_FADE = `linear-gradient(to bottom, ${[
+  ...easedFade(6, 0).reverse(),
+  ...easedFade(BOTTOM_FROM, 100),
+].join(", ")})`;
 
 export default function DeviceCanvas({
   volumes,
@@ -153,23 +202,49 @@ export default function DeviceCanvas({
   onTogglePlay,
   onVolumeStep,
   onTogglePower,
+  onContextLost,
+  onReady,
 }: Props) {
+  const reduceMotion = useReducedMotion();
+  const [userOrbiting, setUserOrbiting] = useState(false);
+  const resumeTimer = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (resumeTimer.current) clearTimeout(resumeTimer.current);
+    },
+    [],
+  );
+  // R3F deliberately destroys the context 500 ms after unmount, which fires
+  // the same event as a GPU failure. Only a loss while mounted is real;
+  // otherwise a remount (a hot reload in dev) would stick on the fallback.
+  const unmounted = useRef(false);
+  useEffect(() => {
+    unmounted.current = false;
+    return () => {
+      unmounted.current = true;
+    };
+  }, []);
+
   return (
-    // The ground shadow darkens the transparent canvas, so the canvas's own
-    // bottom edge showed up as a hard horizontal seam against the page. Fade
-    // the last slice out so it blends at any zoom.
+    // The ground shadow darkens the transparent canvas, so a hard canvas edge
+    // shows as a seam against the page. The canvas overflows its box
+    // downwards and fades out in that overflow. It sits under the controls
+    // that follow it (they stack above), so the overflow never blocks them.
     <div
-      className="relative w-full"
+      className="relative z-0 w-full"
       style={{
-        height: "clamp(340px, 45vw, 480px)",
-        maskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
-        WebkitMaskImage: "linear-gradient(to bottom, black 82%, transparent 100%)",
+        height: `calc(${SCENE_HEIGHT} * ${1 + EXTEND})`,
+        marginBottom: `calc(${SCENE_HEIGHT} * ${-EXTEND})`,
+        maskImage: EDGE_FADE,
+        WebkitMaskImage: EDGE_FADE,
       }}
     >
       <Canvas
         camera={{ position: [0, 3.35, 2.9], fov: 28 }}
         dpr={[1, 2]}
-        shadows
+        // No shadow map: the ground shadow is <ContactShadows>, and self-
+        // shadowing only added acne lines along the groove lips (plus a 2048²
+        // depth texture, ~16 MB of GPU memory).
         gl={{
           antialias: true,
           alpha: true,
@@ -178,20 +253,23 @@ export default function DeviceCanvas({
           toneMappingExposure: 1.25,
         }}
         style={{ background: "transparent" }}
+        aria-label="3D Stem Player. Drag a groove to set a stem's level, tap the centre button to play or pause, hold it to turn the device off."
+        role="img"
+        onCreated={({ gl }) => {
+          gl.domElement.addEventListener(
+            "webglcontextlost",
+            () => {
+              if (!unmounted.current) onContextLost?.();
+            },
+            { once: true },
+          );
+        }}
       >
         {/* Hemisphere light stands in for the studio environment drei's
             <Environment> would have given us — soft sky-to-ground gradient,
             no PMREM pass, no GPU crash. */}
         <hemisphereLight args={["#FFF7EE", "#C4B9A4", 1.3]} />
-        <directionalLight
-          position={[1.5, 4, 2.5]}
-          intensity={1.0}
-          color="#FFFAF3"
-          castShadow
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
-          shadow-bias={-0.0003}
-        />
+        <directionalLight position={[1.5, 4, 2.5]} intensity={1.0} color="#FFFAF3" />
         <directionalLight position={[-3.5, 1.5, 1]} intensity={0.35} color="#EFE6DA" />
         <directionalLight position={[0, 1.2, -4]} intensity={0.7} color="#FFF3E4" />
         {/* Soft bounce so the moulded underside text stays readable when the
@@ -208,6 +286,8 @@ export default function DeviceCanvas({
         />
 
         <GroundShadow />
+        <ReadySignal onReady={onReady} />
+        <ExtendedFrame />
 
         <OrbitControls
           makeDefault
@@ -217,14 +297,55 @@ export default function DeviceCanvas({
           maxDistance={7.0}
           minPolarAngle={0.1}
           maxPolarAngle={Math.PI - 0.1}
-          autoRotate
+          autoRotate={!reduceMotion && !userOrbiting}
           autoRotateSpeed={0.3}
-          dampingFactor={0.05}
-          rotateSpeed={0.6}
+          // Close to the pointer, with a short glide after release. Lower
+          // damping made the model trail the finger and coast for ~1 s.
+          dampingFactor={0.15}
+          rotateSpeed={0.85}
+          onStart={() => {
+            if (resumeTimer.current) clearTimeout(resumeTimer.current);
+            setUserOrbiting(true);
+          }}
+          // Auto-rotate waits a moment before taking back over, so it doesn't
+          // tug the view away the instant you let go.
+          onEnd={() => {
+            resumeTimer.current = window.setTimeout(() => setUserOrbiting(false), 3000);
+          }}
         />
       </Canvas>
     </div>
   );
+}
+
+/** Frames the camera on the scene's layout box and lets the extra strip below
+ *  continue the same projection, so the canvas can grow without the device
+ *  moving or shrinking. R3F would reset the aspect on resize, hence manual. */
+function ExtendedFrame() {
+  const camera = useThree((s) => s.camera) as THREE.PerspectiveCamera & { manual?: boolean };
+  const size = useThree((s) => s.size);
+
+  useLayoutEffect(() => {
+    const frameHeight = size.height / (1 + EXTEND);
+    camera.manual = true;
+    camera.aspect = size.width / frameHeight;
+    camera.setViewOffset(size.width, frameHeight, 0, 0, size.width, size.height);
+    camera.updateProjectionMatrix();
+  }, [camera, size]);
+
+  return null;
+}
+
+/** Mounts only once useGLTF has resolved, since it shares the model's Suspense
+ *  boundary. Waits for the second frame: the first one compiles shaders. */
+function ReadySignal({ onReady }: { onReady?: () => void }) {
+  const frames = useRef(0);
+  useFrame(() => {
+    if (frames.current > 1) return;
+    frames.current += 1;
+    if (frames.current === 2) onReady?.();
+  });
+  return null;
 }
 
 /** Contact shadow that hides itself once the camera drops below the device —
@@ -265,7 +386,7 @@ function patchLedMaterial(
   level: THREE.Vector4,
   amp: THREE.Vector4,
   center: THREE.Vector3,
-  power: { value: number }
+  power: { value: number },
 ) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uLevel = { value: level };
@@ -280,15 +401,12 @@ function patchLedMaterial(
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
-        "#include <common>\nvarying vec3 vObjPos;\nuniform vec3 uCenter;"
+        "#include <common>\nvarying vec3 vObjPos;\nuniform vec3 uCenter;",
       )
       // Mesh-local coords are not centred on the device — the GLB does that via
       // the node transform — so subtract the centre here. Without it, +Y does
       // not mean "top half".
-      .replace(
-        "#include <begin_vertex>",
-        "#include <begin_vertex>\nvObjPos = position - uCenter;"
-      );
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvObjPos = position - uCenter;");
 
     shader.fragmentShader = shader.fragmentShader
       // Sink each LED into a small well: darken the floor and rim, then tilt
@@ -300,13 +418,14 @@ function patchLedMaterial(
           vec4 sampledDiffuseColor = texture2D( map, vMapUv );
           // The legal text is printed as dark ink in the base map. On the real
           // device it is moulded silicone: the same colour as the shell, read
-          // only by relief. Swap the glyph colour back to the flat body tone
+          // mostly by relief. Pull the glyph colour most of the way to the body tone
           // and let bumpMap (same texture) raise it instead.
           vec3 flatTone = texture2D( map, vec2( 0.02, 0.02 ) ).rgb;
           float lum = max( max( sampledDiffuseColor.r, sampledDiffuseColor.g ), sampledDiffuseColor.b );
           float flatLum = max( max( flatTone.r, flatTone.g ), flatTone.b );
           float ink = 1.0 - smoothstep( 0.45, 0.92, lum / max( flatLum, 1e-4 ) );
-          sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, flatTone, ink );
+          // A trace of the ink is kept so the relief stays legible from a distance.
+          sampledDiffuseColor.rgb = mix( sampledDiffuseColor.rgb, flatTone, ink * 0.75 );
           diffuseColor *= sampledDiffuseColor;
         #endif
         {
@@ -316,10 +435,10 @@ function patchLedMaterial(
           float chan = channelMask( g );
           float well = ( 1.0 - smoothstep( LED_RADIUS * 0.9, LED_RADIUS * 1.7, g.dist ) )
                      * step( 0.0, vObjPos.y );
-          diffuseColor.rgb *= mix( 1.0, 0.68, chan );
+          diffuseColor.rgb *= mix( 1.0, 0.66, chan );
           diffuseColor.rgb *= mix( 1.0, 0.92, well );
 
-        }`
+        }`,
       )
       .replace(
         "#include <normal_fragment_begin>",
@@ -329,23 +448,37 @@ function patchLedMaterial(
           Groove g = grooveAt();
           float top = step( 0.0, vObjPos.y );
 
-          // Channel walls: tilt inward across the trench so the sides catch
-          // light like a moulded groove rather than a painted stripe.
-          float cd = channelSDF( g );
-          float wall = ( 1.0 - smoothstep( 0.0, 0.018, abs( cd ) ) ) * step( -0.020, cd ) * top;
-          vec2 wdir = normalize( g.v * g.dv + vec2( 1e-6 ) );
-          normal = normalize( normal - normalMatrix * vec3( wdir.x, 0.0, wdir.y ) * wall * 0.85 );
+          // The model's groove wall is a narrow, steep strip that the lights
+          // barely reach, so each side rendered as a thin dark line when zoomed
+          // in. Its normals are replaced with a wide, gentle slope: a soft
+          // moulded channel rather than a cut. The band starts on the floor and
+          // ends past the real wall, and fades at both ends, so it joins the
+          // model's own normals without a seam.
+          {
+            float cd = channelSDF( g );
+            float band = smoothstep( -0.01, 0.015, cd ) * ( 1.0 - smoothstep( 0.05, 0.075, cd ) ) * top;
+            float slope = sin( clamp( ( cd + 0.01 ) / 0.085, 0.0, 1.0 ) * PI ) * 0.9;
+            // Outward direction from the capsule, straight sides and round ends.
+            float mid = ( uBand.x + uBand.y ) * 0.5;
+            float halfSeg = ( uBand.y - uBand.x ) * 0.5 + 0.048 - GROOVE_HALF_W;
+            float xa = sign( g.along - mid ) * max( abs( g.along - mid ) - halfSeg, 0.0 );
+            vec2 outward = normalize( g.u * xa + g.v * g.dv + vec2( 1e-6 ) );
+            vec3 bevel = normalize( vec3( 0.0, 1.0, 0.0 ) - vec3( outward.x, 0.0, outward.y ) * slope );
+            normal = normalize( mix( normal, normalize( normalMatrix * bevel ), band ) );
+          }
 
-          // The LED sits in its own dish at the bottom of that channel.
+          // Each LED sits in its own dish at the bottom of the channel. The rim
+          // fades out before the cell boundary: the tilt direction flips there,
+          // and a rim that reached it drew a hard line across the groove.
           vec2 ldir = normalize( g.u * ( g.along - mix( uBand.x, uBand.y, ( g.idx + 0.5 ) / LED_COUNT ) ) + g.v * g.dv + vec2( 1e-6 ) );
-          float rim = smoothstep( LED_RADIUS * 0.55, LED_RADIUS, g.dist )
-                    * ( 1.0 - smoothstep( LED_RADIUS, LED_RADIUS * 1.5, g.dist ) ) * top;
+          float rim = smoothstep( LED_RADIUS * 0.45, LED_RADIUS * 0.75, g.dist )
+                    * ( 1.0 - smoothstep( LED_RADIUS * 0.75, LED_RADIUS * 0.98, g.dist ) ) * top;
           normal = normalize( normal - normalMatrix * vec3( ldir.x, 0.0, ldir.y ) * rim * 0.5 );
 
           // Keep our own channel/well shaping, but drop the bumpMap on the top
           // face (see normal_fragment_maps below).
           nShaped = normal;
-        }`
+        }`,
       )
       .replace(
         "#include <normal_fragment_maps>",
@@ -357,12 +490,12 @@ function patchLedMaterial(
         // Shape-agnostic crease accent: darkens wherever the surface actually
         // bends, so modelled edges (pad rims, ports, channel walls) read as
         // tactile without any hand-placed geometry to get wrong.
-        float curv = clamp( length( fwidth( normal ) ) * 1.8, 0.0, 1.0 );`
+        float curv = clamp( length( fwidth( normal ) ) * 1.8, 0.0, 1.0 );`,
       )
       .replace(
         "#include <aomap_fragment>",
         `#include <aomap_fragment>
-        reflectedLight.indirectDiffuse *= mix( 1.0, 0.72, curv );`
+        reflectedLight.indirectDiffuse *= mix( 1.0, 0.72, curv );`,
       )
       .replace(
         "#include <common>",
@@ -437,10 +570,11 @@ function patchLedMaterial(
           return length( vec2( x, g.dv ) ) - GROOVE_HALF_W;
         }
 
-        // 1 on the channel floor, falling to 0 outside it. Drives both the
-        // occlusion in the trench and the wall shading.
+        // 1 on the channel floor, falling to 0 outside it. The falloff is wide
+        // so the occlusion ramps up to the model's own groove edge instead of
+        // drawing an edge of its own.
         float channelMask( Groove g ) {
-          return ( 1.0 - smoothstep( -0.014, 0.002, channelSDF( g ) ) )
+          return ( 1.0 - smoothstep( -0.03, 0.014, channelSDF( g ) ) )
                * step( 0.0, vObjPos.y );
         }
 
@@ -454,12 +588,40 @@ function patchLedMaterial(
           c = mix( c, uLed3, step( 2.5, i ) );
           c = mix( c, uLed4, step( 3.5, i ) );
           return c;
-                }`
+        }
+
+        // Light from every LED in the groove, summed, so neighbouring glows blend
+        // with no seam at cell boundaries. Each LED is a near-white hot core, a
+        // saturated halo, and a wide faint bleed into the surrounding silicone,
+        // the way a real LED reads through a rubber skin. The palette is
+        // pastel, so it is pushed toward saturation first; ACES tone mapping
+        // would otherwise wash every LED out to the same off-white.
+        //
+        // Volume lights WHOLE LEDs: LED i is on once nLit passes it, so
+        // dragging never leaves one half-lit.
+        vec3 ledGlow( Groove g, float nLit ) {
+          vec3 glow = vec3( 0.0 );
+          for ( int k = 0; k < 5; k++ ) {
+            float i = float( k );
+            float c = mix( uBand.x, uBand.y, ( i + 0.5 ) / LED_COUNT );
+            float d = length( vec2( g.along - c, g.dv ) );
+            vec3 lc = ledPalette( i );
+            lc = max( mix( vec3( dot( lc, vec3( 0.299, 0.587, 0.114 ) ) ), lc, 1.6 ), 0.0 );
+            float core = 1.0 - smoothstep( LED_RADIUS * 0.15, LED_RADIUS * 0.8, d );
+            float halo = exp( -( d * d ) / ( LED_RADIUS * LED_RADIUS * 1.1 ) );
+            float bleed = exp( -( d * d ) / ( LED_BLEED * LED_BLEED * 2.5 ) );
+            glow += ( mix( lc, vec3( 1.0 ), 0.12 ) * core * 0.8 + lc * halo * 0.75 + lc * bleed * 0.22 )
+                  * step( i + 0.5, nLit );
+          }
+          return glow;
+        }`,
       )
       .replace(
         "#include <emissivemap_fragment>",
+        // Runs unconditionally: the LEDs come from the emissive colour and the
+        // groove maths, never from a texture.
         `
-        #ifdef USE_EMISSIVEMAP
+        {
           Groove g = grooveAt();
 
           // One-hot select instead of dynamic array indexing, which GLSL ES 1.0
@@ -473,29 +635,17 @@ function patchLedMaterial(
           float lvl = dot( uLevel, onehot );
           float a = dot( uAmp, onehot );
 
-          // A soft core plus a gaussian bleed, so the light diffuses into the
-          // silicone instead of stopping at a hard circle.
-          float core = 1.0 - smoothstep( LED_RADIUS * 0.30, LED_RADIUS * 1.30, g.dist );
-          float bleed = exp( -( g.dist * g.dist ) / ( LED_BLEED * LED_BLEED ) );
-          float dotMask = min( 1.0, core * 0.80 + bleed * 0.45 );
-
-          // Volume fills the strip outward in WHOLE LEDs. Quantising the count
-          // first puts the cut on an integer cell boundary — i.e. in the gap
-          // between two LEDs — so dragging never leaves one half-lit. Without
-          // the ceil the boundary slides through an LED's centre.
-          float cellPos = ( g.along - uBand.x ) / ( uBand.y - uBand.x ) * LED_COUNT;
+          // How many whole LEDs this groove's level lights.
           float nLit = ceil( lvl * LED_COUNT - 0.0001 );
-          float lit = 1.0 - smoothstep( nLit - 0.2, nLit + 0.2, cellPos );
-          float idx = g.idx;
 
           // Top face only — the pattern is derived from XZ, so without this it
           // mirrors onto the underside.
           float topOnly = step( 0.0, vObjPos.y );
 
           totalEmissiveRadiance *=
-            ledPalette( idx ) * dotMask * lit * topOnly * uOn * ( 0.55 + a * 1.4 );
-        #endif
-        `
+            ledGlow( g, nLit ) * topOnly * uOn * ( 0.8 + a * 1.2 );
+        }
+        `,
       );
   };
   material.needsUpdate = true;
@@ -510,6 +660,7 @@ function Device({
   onTogglePower,
 }: Props) {
   const { scene } = useGLTF(MODEL_URL);
+  const reduceMotion = useReducedMotion();
   const deviceColor = usePlayerStore((s) => s.deviceColor);
   const isOn = usePlayerStore((s) => s.isOn);
   const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
@@ -619,14 +770,15 @@ function Device({
   const level = useRef(new THREE.Vector4(1, 1, 1, 1));
   const amp = useRef(new THREE.Vector4(0, 0, 0, 0));
   const power = useRef({ value: 1 });
-  const body = useRef<THREE.MeshPhysicalMaterial | null>(null);
-
-  useMemo(() => {
+  // The shell material can be rebuilt without deviceColor changing (a
+  // remount, or a hot reload in dev). Applying the colourway only on colour
+  // changes left a rebuilt shell in its default tan while the picker showed
+  // another colour, so it is also applied as the material is built, and the
+  // effect below re-runs on every rebuild.
+  const build = useMemo(() => {
     scene.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
       if (!mesh.isMesh) return;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
 
       let mat = mesh.material as THREE.MeshPhysicalMaterial;
       // Only the outer shell is a closed solid. The port cavities and speaker
@@ -635,35 +787,41 @@ function Device({
       mat.side = mat.name === "Stemplayer" ? THREE.FrontSide : THREE.DoubleSide;
       if (mat.name === "Stemplayer") {
         // The loader gives us MeshStandardMaterial, which has no transmission.
-        // Rebuild as physical, carrying the maps across.
+        // Rebuild as physical, carrying the base map across. The GLB's 4096²
+        // LED emissive map is left behind: the shader draws the LEDs itself and
+        // never samples it, yet uploading it cost ~85 MB of GPU memory — enough
+        // to get the context killed on phones.
+        if (mat.emissiveMap) {
+          // The decoded bitmap (64 MB) outlives the texture in useGLTF's cache.
+          const bitmap = mat.emissiveMap.source.data as { close?: () => void } | null;
+          bitmap?.close?.();
+          mat.emissiveMap.dispose();
+        }
         const phys = new THREE.MeshPhysicalMaterial({
           name: mat.name,
           map: mat.map,
           emissive: mat.emissive,
-          emissiveMap: mat.emissiveMap,
           metalness: mat.metalness,
           roughness: mat.roughness,
           side: mat.side,
         });
         phys.ior = 1.46;
-        phys.clearcoatRoughness = 0.18;
+        phys.clearcoatRoughness = 0.6;
+        // Silicone has a soft, slightly velvety rim where it turns away from
+        // the viewer; sheen gives that instead of reading as matte plastic.
+        phys.sheen = 0.35;
+        phys.sheenRoughness = 0.6;
+        phys.sheenColor.set("#fff1e6");
         mesh.material = phys;
         mat = phys;
-        body.current = mat;
+        applyColorway(phys, usePlayerStore.getState().deviceColor);
         mat.emissiveIntensity = 1.15;
-        // The LED dots sit ~40 texels apart in a 4096 map that lands on a few
-        // hundred screen pixels. At the default anisotropy the mip chain blurs
-        // neighbouring dots into one continuous stripe.
-        if (mat.emissiveMap) {
-          mat.emissiveMap.anisotropy = maxAnisotropy;
-          mat.emissiveMap.needsUpdate = true;
-        }
         // Reuse the base map as a height field so the legal text stands proud.
         // Negative scale because the glyphs are the map's *dark* pixels.
         if (mat.map) {
           mat.map.anisotropy = maxAnisotropy;
           mat.bumpMap = mat.map;
-          mat.bumpScale = -0.06;
+          mat.bumpScale = -0.1;
         }
         mesh.geometry.computeBoundingBox();
         const center = new THREE.Vector3();
@@ -671,28 +829,41 @@ function Device({
         patchLedMaterial(mat, level.current, amp.current, center, power.current);
       }
     });
+    return {};
   }, [scene, maxAnisotropy]);
 
+  // Tints whatever material is on the shell now. Holding a reference to the
+  // one useMemo built isn't safe: Strict Mode can build twice and keep the
+  // first result, leaving the effect tinting a material nothing renders.
   useEffect(() => {
-    const mat = body.current;
-    if (!mat) return;
-    const cw = COLORWAYS[deviceColor];
-    mat.color.setRGB(cw.tint[0], cw.tint[1], cw.tint[2]);
-    mat.roughness = cw.roughness;
-    mat.transmission = cw.transmission;
-    mat.thickness = cw.thickness;
-    mat.clearcoat = cw.clearcoat;
-    mat.attenuationColor.set(cw.attenuation);
-    mat.attenuationDistance = cw.attenuationDistance;
-    mat.transparent = cw.transmission > 0;
-    // Toggling transmission changes the shader defines.
-    mat.needsUpdate = true;
-  }, [deviceColor]);
+    scene.traverse((obj) => {
+      const mat = (obj as THREE.Mesh).material as THREE.MeshPhysicalMaterial | undefined;
+      if ((obj as THREE.Mesh).isMesh && mat?.name === "Stemplayer") applyColorway(mat, deviceColor);
+    });
+  }, [scene, build, deviceColor]);
 
-  useFrame(() => {
-    power.current.value = isOn ? 1 : 0;
+  useFrame(({ clock }) => {
     const l = level.current;
     const a = amp.current;
+    const { status, processingProgress } = usePlayerStore.getState();
+
+    // While the song separates, the device itself is the progress indicator:
+    // each groove fills hub to rim in turn. With reduced motion they hold
+    // still at the job's progress instead.
+    if (status === "processing") {
+      power.current.value = 1;
+      const t = clock.getElapsedTime();
+      for (let i = 0; i < 4; i++) {
+        const v = reduceMotion
+          ? Math.max(0.2, processingProgress / 100)
+          : (t * 0.9 + i * 0.25) % 1.2; // clamped below, so each arm holds full briefly
+        l.setComponent(i, Math.min(1, v));
+        a.setComponent(i, 0);
+      }
+      return;
+    }
+
+    power.current.value = isOn ? 1 : 0;
     for (let i = 0; i < 4; i++) {
       const stem = ARM_ORDER[i];
       l.setComponent(i, volumes[stem] ?? 0);
