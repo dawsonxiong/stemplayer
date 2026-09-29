@@ -16,7 +16,7 @@ export type StemName = keyof typeof STEMS;
 export const DEVICE_COLORS = {
   tan: { label: "Tan", swatch: "#AA8D80" },
   bao: { label: "Bao", swatch: "#E4E3DE" },
-  clear: { label: "Clear", swatch: "#9B9791" },
+  clear: { label: "Clear", swatch: "#D8E1EA" },
 } as const;
 
 export type DeviceColor = keyof typeof DEVICE_COLORS;

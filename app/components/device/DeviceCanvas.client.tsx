@@ -38,6 +38,9 @@ interface Colorway {
    *  read as smoked rather than as clean glass. */
   attenuation: string;
   attenuationDistance: number;
+  /** How far LED light spreads through the shell. A translucent skin carries
+   *  the glow well past the groove; opaque silicone keeps it tight. */
+  ledDiffuse: number;
 }
 
 const COLORWAYS: Record<DeviceColor, Colorway> = {
@@ -50,6 +53,7 @@ const COLORWAYS: Record<DeviceColor, Colorway> = {
     clearcoat: 0,
     attenuation: "#ffffff",
     attenuationDistance: Infinity,
+    ledDiffuse: 1,
   },
   bao: {
     tint: [1.45, 2.2, 3.0],
@@ -59,18 +63,22 @@ const COLORWAYS: Record<DeviceColor, Colorway> = {
     clearcoat: 0,
     attenuation: "#ffffff",
     attenuationDistance: Infinity,
+    ledDiffuse: 1,
   },
   clear: {
-    // The real Clear is frosted silicone, not glass: milky cool grey, with the
-    // board and ports reading only as soft shadows. High roughness blurs what
-    // is seen through it; matte, so almost no clearcoat.
-    tint: [1.12, 1.72, 2.4],
-    roughness: 0.86,
-    transmission: 0.45,
-    thickness: 1.0,
-    clearcoat: 0.1,
-    attenuation: "#C4C6C8",
-    attenuationDistance: 1.1,
+    // The real Clear is milky, cool-white silicone: bright, softly glossy, with
+    // the LEDs glowing through and the internals showing only as vague shapes.
+    // Transmission alone darkens it (there's nothing bright behind the device
+    // to see through), so the brightness comes from a light cool tint and the
+    // translucency from a little transmission plus wider LED glow.
+    tint: [1.5, 2.35, 3.5],
+    roughness: 0.55,
+    transmission: 0.35,
+    thickness: 0.9,
+    clearcoat: 0.3,
+    attenuation: "#E8EDF1",
+    attenuationDistance: 2.0,
+    ledDiffuse: 1.3,
   },
 };
 
@@ -83,6 +91,9 @@ function applyColorway(mat: THREE.MeshPhysicalMaterial, color: DeviceColor) {
   mat.clearcoat = cw.clearcoat;
   mat.attenuationColor.set(cw.attenuation);
   mat.attenuationDistance = cw.attenuationDistance;
+  mat.sheenColor.set(cw.transmission > 0 ? "#f2f6ff" : "#fff1e6");
+  // Read by the LED shader as a uniform, so it changes without a recompile.
+  ((mat.userData.ledDiffuse ??= { value: 1 }) as { value: number }).value = cw.ledDiffuse;
   // Transmission renders in its own pass and needs no blending. Marking it
   // transparent alpha-blended the internals through the shell, sharp and
   // unblurred, which read as glass rather than frosted silicone.
@@ -393,6 +404,7 @@ function patchLedMaterial(
     shader.uniforms.uAmp = { value: amp };
     shader.uniforms.uCenter = { value: center };
     shader.uniforms.uOn = power;
+    shader.uniforms.uDiffuse = material.userData.ledDiffuse ??= { value: 1 };
     shader.uniforms.uBand = { value: new THREE.Vector2(LED_R_MIN, LED_R_MAX) };
     LED_PALETTE.forEach((hex, i) => {
       shader.uniforms[`uLed${i}`] = { value: new THREE.Color(hex) };
@@ -505,6 +517,7 @@ function patchLedMaterial(
         uniform vec4 uAmp;
         uniform vec2 uBand;
         uniform float uOn;
+        uniform float uDiffuse;
         uniform vec3 uLed0;
         uniform vec3 uLed1;
         uniform vec3 uLed2;
@@ -609,8 +622,8 @@ function patchLedMaterial(
             lc = max( mix( vec3( dot( lc, vec3( 0.299, 0.587, 0.114 ) ) ), lc, 1.6 ), 0.0 );
             float core = 1.0 - smoothstep( LED_RADIUS * 0.15, LED_RADIUS * 0.8, d );
             float halo = exp( -( d * d ) / ( LED_RADIUS * LED_RADIUS * 1.1 ) );
-            float bleed = exp( -( d * d ) / ( LED_BLEED * LED_BLEED * 2.5 ) );
-            glow += ( mix( lc, vec3( 1.0 ), 0.12 ) * core * 0.8 + lc * halo * 0.75 + lc * bleed * 0.22 )
+            float bleed = exp( -( d * d ) / ( LED_BLEED * LED_BLEED * 2.5 * uDiffuse * uDiffuse ) );
+            glow += ( mix( lc, vec3( 1.0 ), 0.12 ) * core * 0.8 + lc * halo * 0.75 + lc * bleed * 0.22 * uDiffuse )
                   * step( i + 0.5, nLit );
           }
           return glow;
@@ -787,16 +800,9 @@ function Device({
       mat.side = mat.name === "Stemplayer" ? THREE.FrontSide : THREE.DoubleSide;
       if (mat.name === "Stemplayer") {
         // The loader gives us MeshStandardMaterial, which has no transmission.
-        // Rebuild as physical, carrying the base map across. The GLB's 4096²
-        // LED emissive map is left behind: the shader draws the LEDs itself and
-        // never samples it, yet uploading it cost ~85 MB of GPU memory — enough
-        // to get the context killed on phones.
-        if (mat.emissiveMap) {
-          // The decoded bitmap (64 MB) outlives the texture in useGLTF's cache.
-          const bitmap = mat.emissiveMap.source.data as { close?: () => void } | null;
-          bitmap?.close?.();
-          mat.emissiveMap.dispose();
-        }
+        // Rebuild as physical, carrying the base map across. The LEDs are
+        // drawn by the shader (patchLedMaterial); the artist's baked LED map
+        // was never sampled, so it has been stripped from the GLB.
         const phys = new THREE.MeshPhysicalMaterial({
           name: mat.name,
           map: mat.map,
@@ -811,7 +817,7 @@ function Device({
         // the viewer; sheen gives that instead of reading as matte plastic.
         phys.sheen = 0.35;
         phys.sheenRoughness = 0.6;
-        phys.sheenColor.set("#fff1e6");
+        phys.sheenColor.set("#fff1e6"); // cooled for Clear in applyColorway
         mesh.material = phys;
         mat = phys;
         applyColorway(phys, usePlayerStore.getState().deviceColor);
