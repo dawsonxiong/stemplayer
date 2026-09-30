@@ -45,6 +45,16 @@ def _report(webhook_url: str, payload: dict) -> None:
         pass
 
 
+def _sha256(path: str) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 @app.function(
     image=demucs_image,
     gpu="T4",
@@ -84,6 +94,7 @@ def separate(task_id: str, input_r2_key: str, webhook_url: str):
 
             progress(5)
             s3.download_file(bucket, input_r2_key, input_path)
+            input_sha256 = _sha256(input_path)
             progress(15)
 
             # Run Demucs (htdemucs base model — ~25s on T4 for a 4-min track)
@@ -122,7 +133,13 @@ def separate(task_id: str, input_r2_key: str, webhook_url: str):
 
             _report(
                 webhook_url,
-                {"task_id": task_id, "status": "ready", "stems": stem_keys},
+                {
+                    "task_id": task_id,
+                    "status": "ready",
+                    "stems": stem_keys,
+                    # Lets the Worker recognise the same song uploaded again.
+                    "input_sha256": input_sha256,
+                },
             )
 
         return {"task_id": task_id, "status": "complete"}

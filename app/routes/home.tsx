@@ -7,13 +7,16 @@ import { TransportBar } from "~/components/transport/TransportBar";
 import { EffectsPanel } from "~/components/effects/EffectsPanel";
 import { UploadZone } from "~/components/upload/UploadZone";
 import { ProcessingSteps } from "~/components/upload/ProcessingSteps";
+import { HistoryList } from "~/components/upload/HistoryList";
 import { useAudioEngine } from "~/hooks/useAudioEngine";
 import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
 import { usePlayerStore, type Stage } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
 import { formatTime } from "~/lib/utils/format";
 import { titleFromFilename } from "~/lib/utils/title";
+import { forgetTrack, rememberTrack } from "~/lib/history";
 import {
+  hashFile,
   requestUploadUrl,
   uploadFileToR2,
   triggerSeparation,
@@ -23,12 +26,21 @@ import {
 } from "~/lib/api";
 
 // Said in the product's voice: what happened, then what to do.
+const OPEN_ERROR =
+  "That song couldn’t be opened. It may have expired, so drop it again to split it.";
+
 const STAGE_ERRORS: Record<Stage, string> = {
   upload: "The upload didn’t finish. Check your connection, then drop the song again.",
   start: "The GPU didn’t start. Drop the song again to retry.",
   separate: "Separating the stems failed. Drop the song again to retry.",
   load: "The stems are ready but didn’t load. Reload the page to try again.",
 };
+
+/** Adds the loaded song to this browser's history. */
+function remember(taskId: string) {
+  const { trackTitle, duration, trackDate } = usePlayerStore.getState();
+  rememberTrack({ taskId, title: trackTitle, duration, addedAt: trackDate ?? Date.now() });
+}
 
 /** Reloads and shared links bring a separated track back without a new GPU run. */
 function setTrackParam(taskId: string | null) {
@@ -81,30 +93,41 @@ export default function Home() {
       try {
         enter("upload");
         store.setStatus("uploading");
-        const { taskId, uploadUrl } = await requestUploadUrl(file);
+        // A failed hash only costs the cache hit, never the upload.
+        const hash = await hashFile(file).catch(() => null);
+        const ticket = await requestUploadUrl(file, hash);
+        const { taskId } = ticket;
         store.setTaskId(taskId);
 
-        await uploadFileToR2(uploadUrl, file, (progress) => {
-          store.setProcessingProgress(progress);
-        });
+        // Split before: its stems are already there, so skip straight to loading.
+        if ("uploadUrl" in ticket) {
+          await uploadFileToR2(ticket.uploadUrl, file, (progress) => {
+            store.setProcessingProgress(progress);
+          });
 
-        enter("start");
-        store.setStatus("processing");
-        await triggerSeparation(taskId);
+          enter("start");
+          store.setStatus("processing");
+          await triggerSeparation(taskId);
 
-        // The job's first progress report means the GPU is up and working.
-        await pollStatus(taskId, (progress) => {
-          if (progress > 0 && usePlayerStore.getState().stage === "start") enter("separate");
-          store.setProcessingProgress(progress);
-        });
+          // The job's first progress report means the GPU is up and working.
+          await pollStatus(taskId, (progress) => {
+            if (progress > 0 && usePlayerStore.getState().stage === "start") enter("separate");
+            store.setProcessingProgress(progress);
+          });
+        } else {
+          store.setStatus("processing");
+        }
 
         // Set before loading, so a reload retries the load and not the GPU run.
         enter("load");
         setTrackParam(taskId);
-        const { stems } = await fetchStemUrls(taskId);
+        const { stems, createdAt } = await fetchStemUrls(taskId);
         await audioEngine?.loadStems(stems);
         // Known once the stems load; otherwise it only updates during playback.
         store.setDuration(audioEngine?.duration ?? 0);
+        // A cached song keeps its original date, which is also when it expires.
+        if (createdAt) store.setTrackDate(createdAt);
+        remember(taskId);
 
         store.setStatus("ready");
         store.setStage(null);
@@ -121,31 +144,43 @@ export default function Home() {
     [audioEngine],
   );
 
-  useEffect(() => {
-    const taskId = new URLSearchParams(window.location.search).get("t");
-    if (!audioEngine || !taskId) return;
+  /** Loads a song that was split before, from a link, a reload or history. */
+  const openTrack = useCallback(
+    async (taskId: string, knownTitle?: string) => {
+      if (!audioEngine) return;
+      const store = usePlayerStore.getState();
+      store.reset();
+      store.setTaskId(taskId);
+      store.setStage("load");
+      store.setStatus("processing");
+      setTrackParam(taskId);
 
-    const store = usePlayerStore.getState();
-    if (store.status !== "idle") return;
-    store.setTaskId(taskId);
-    store.setStage("load");
-    store.setStatus("processing");
-
-    fetchStemUrls(taskId)
-      .then(async ({ stems, title, createdAt }) => {
+      try {
+        const { stems, title, createdAt } = await fetchStemUrls(taskId);
         await audioEngine.loadStems(stems);
         store.setDuration(audioEngine.duration);
-        store.setTrackTitle(titleFromFilename(title));
+        store.setTrackTitle(knownTitle ?? titleFromFilename(title));
         store.setTrackDate(createdAt);
+        remember(taskId);
         // No autoplay: the browser wants a gesture before audio starts.
         store.setStatus("ready");
         store.setStage(null);
-      })
-      .catch(() => {
+      } catch {
+        forgetTrack(taskId);
         setTrackParam(null);
         store.reset();
-      });
-  }, [audioEngine]);
+        store.setStatus("error");
+        store.setErrorMessage(OPEN_ERROR);
+      }
+    },
+    [audioEngine],
+  );
+
+  useEffect(() => {
+    const taskId = new URLSearchParams(window.location.search).get("t");
+    if (!taskId || usePlayerStore.getState().status !== "idle") return;
+    void openTrack(taskId);
+  }, [openTrack]);
 
   useEffect(() => {
     document.title =
@@ -231,6 +266,9 @@ export default function Home() {
         )}
 
         <UploadZone onFileSelected={handleFileSelected} />
+        {(status === "idle" || status === "error") && (
+          <HistoryList onOpen={(entry) => void openTrack(entry.taskId, entry.title)} />
+        )}
       </div>
 
       {status === "ready" && (

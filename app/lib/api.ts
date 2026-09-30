@@ -11,7 +11,16 @@ async function failure(res: Response, fallback: string): Promise<Error> {
   return new Error(body.error || `${fallback} (${res.status})`);
 }
 
-export async function requestUploadUrl(file: File) {
+/** SHA-256 of the file's bytes, so a song split before is recognised. */
+export async function hashFile(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Either a fresh task to upload into, or the finished task for the same song. */
+export type UploadTicket = { taskId: string; uploadUrl: string } | { taskId: string; cached: true };
+
+export async function requestUploadUrl(file: File, hash: string | null) {
   const res = await fetch("/api/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -19,10 +28,11 @@ export async function requestUploadUrl(file: File) {
       filename: file.name,
       contentType: file.type,
       fileSize: file.size,
+      hash,
     }),
   });
   if (!res.ok) throw await failure(res, "Upload request failed");
-  return res.json() as Promise<{ taskId: string; uploadUrl: string }>;
+  return res.json() as Promise<UploadTicket>;
 }
 
 export async function uploadFileToR2(
