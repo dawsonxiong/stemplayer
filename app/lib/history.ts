@@ -16,19 +16,21 @@ const MAX_AGE_MS = AUTO_DELETE_DAYS * 86_400_000;
 
 const listeners = new Set<() => void>();
 const EMPTY: HistoryEntry[] = [];
+// What React renders from. Dropped whenever storage may have changed.
 let cache: HistoryEntry[] | null = null;
 
-function read(): HistoryEntry[] {
-  if (cache) return cache;
+/** Straight from storage, so a write never clobbers another tab's changes. */
+function load(): HistoryEntry[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY) ?? "[]") as HistoryEntry[];
     const cutoff = Date.now() - MAX_AGE_MS;
-    cache = Array.isArray(parsed) ? parsed.filter((e) => e.taskId && e.addedAt > cutoff) : [];
+    return Array.isArray(parsed) ? parsed.filter((e) => e.taskId && e.addedAt > cutoff) : [];
   } catch {
-    cache = [];
+    return [];
   }
-  return cache;
 }
+
+const snapshot = () => (cache ??= load());
 
 function write(entries: HistoryEntry[]) {
   cache = entries;
@@ -42,19 +44,33 @@ function write(entries: HistoryEntry[]) {
 
 /** Newest first; opening a song again moves it back to the top. */
 export function rememberTrack(entry: HistoryEntry) {
-  const rest = read().filter((e) => e.taskId !== entry.taskId);
+  const rest = load().filter((e) => e.taskId !== entry.taskId);
   write([entry, ...rest].slice(0, MAX_ENTRIES));
 }
 
 export function forgetTrack(taskId: string) {
-  write(read().filter((e) => e.taskId !== taskId));
+  write(load().filter((e) => e.taskId !== taskId));
+}
+
+export function findTrack(taskId: string): HistoryEntry | undefined {
+  return load().find((e) => e.taskId === taskId);
 }
 
 function subscribe(listener: () => void) {
+  // Another tab split or removed a song.
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== KEY && e.key !== null) return;
+    cache = null;
+    listener();
+  };
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  window.addEventListener("storage", onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
 }
 
 export function useHistory(): HistoryEntry[] {
-  return useSyncExternalStore(subscribe, read, () => EMPTY);
+  return useSyncExternalStore(subscribe, snapshot, () => EMPTY);
 }

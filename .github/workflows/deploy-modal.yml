@@ -8,6 +8,10 @@ on:
     paths: ["modal/**"]
   workflow_dispatch:
 
+# Only reads the repo; the deploy authenticates with the Modal token.
+permissions:
+  contents: read
+
 # A newer push supersedes a deploy that hasn't finished.
 concurrency:
   group: deploy-modal

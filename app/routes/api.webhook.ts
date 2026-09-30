@@ -1,5 +1,6 @@
 import type { Route } from "./+types/api.webhook";
 import { secretMatches } from "~/lib/utils/secret";
+import { SHA256, stemCacheKey } from "~/lib/stem-cache";
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env;
@@ -45,8 +46,8 @@ export async function action({ request, context }: Route.ActionArgs) {
   );
 
   // Expires with the job, since the stems it points at go at the same time.
-  if (status === "ready" && input_sha256 && /^[0-9a-f]{64}$/.test(input_sha256)) {
-    await env.JOBS.put(`hash:${input_sha256}`, task_id, { expirationTtl: 86400 * 14 });
+  if (status === "ready" && input_sha256 && SHA256.test(input_sha256)) {
+    await env.JOBS.put(stemCacheKey(input_sha256), task_id, { expirationTtl: 86400 * 14 });
   }
 
   return Response.json({ ok: true });

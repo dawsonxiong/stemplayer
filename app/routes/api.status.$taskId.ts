@@ -1,9 +1,16 @@
 import type { Route } from "./+types/api.status.$taskId";
 
 export async function loader({ params, context }: Route.LoaderArgs) {
-  const data = await context.cloudflare.env.JOBS.get(params.taskId, "json");
+  const data = await context.cloudflare.env.JOBS.get<{
+    status: string;
+    progress?: number;
+    error?: string;
+  }>(params.taskId, "json");
   if (!data) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
-  return Response.json(data);
+  // Only what polling needs. A cache hit shares another upload's task, so its
+  // filename and storage keys stay on the server.
+  const { status, progress, error } = data;
+  return Response.json({ status, progress, error });
 }

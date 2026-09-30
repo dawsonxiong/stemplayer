@@ -4,6 +4,9 @@ import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./const
  *  limit, the hourly cap) rather than for a developer. */
 export class UserFacingError extends Error {}
 
+/** The task, or its stems, no longer exist: expired, or never finished. */
+export class TrackNotFoundError extends Error {}
+
 /** Client errors carry a message meant for the user; server errors do not. */
 async function failure(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -73,7 +76,6 @@ interface JobStatus {
   status: "uploaded" | "processing" | "ready" | "error";
   progress?: number;
   error?: string;
-  stems?: Record<string, string>;
 }
 
 export async function pollStatus(
@@ -105,9 +107,8 @@ export async function pollStatus(
 
 export async function fetchStemUrls(taskId: string) {
   const res = await fetch(`/api/stems/${taskId}`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch stem URLs");
-  }
+  if (res.status === 404) throw new TrackNotFoundError("Stems not found");
+  if (!res.ok) throw new Error(`Failed to fetch stem URLs (${res.status})`);
   return res.json() as Promise<{
     stems: Record<string, string>;
     title: string;

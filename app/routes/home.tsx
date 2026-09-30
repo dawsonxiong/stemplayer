@@ -14,7 +14,7 @@ import { usePlayerStore, type Stage } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
 import { formatTime } from "~/lib/utils/format";
 import { titleFromFilename } from "~/lib/utils/title";
-import { forgetTrack, rememberTrack } from "~/lib/history";
+import { findTrack, forgetTrack, rememberTrack } from "~/lib/history";
 import {
   hashFile,
   requestUploadUrl,
@@ -22,12 +22,13 @@ import {
   triggerSeparation,
   pollStatus,
   fetchStemUrls,
+  TrackNotFoundError,
   UserFacingError,
 } from "~/lib/api";
 
 // Said in the product's voice: what happened, then what to do.
-const OPEN_ERROR =
-  "That song couldn’t be opened. It may have expired, so drop it again to split it.";
+const EXPIRED_ERROR = "That song has expired. Drop it again to split it.";
+const OPEN_ERROR = "That song didn’t load. Check your connection and try again.";
 
 const STAGE_ERRORS: Record<Stage, string> = {
   upload: "The upload didn’t finish. Check your connection, then drop the song again.",
@@ -165,12 +166,14 @@ export default function Home() {
         // No autoplay: the browser wants a gesture before audio starts.
         store.setStatus("ready");
         store.setStage(null);
-      } catch {
-        forgetTrack(taskId);
+      } catch (err) {
+        // Only a missing task is gone for good; a dropped connection isn't.
+        const expired = err instanceof TrackNotFoundError;
+        if (expired) forgetTrack(taskId);
         setTrackParam(null);
         store.reset();
         store.setStatus("error");
-        store.setErrorMessage(OPEN_ERROR);
+        store.setErrorMessage(expired ? EXPIRED_ERROR : OPEN_ERROR);
       }
     },
     [audioEngine],
@@ -179,7 +182,9 @@ export default function Home() {
   useEffect(() => {
     const taskId = new URLSearchParams(window.location.search).get("t");
     if (!taskId || usePlayerStore.getState().status !== "idle") return;
-    void openTrack(taskId);
+    // A cached song's task can come from someone else's upload, so prefer the
+    // title this browser gave it over the name stored with the task.
+    void openTrack(taskId, findTrack(taskId)?.title);
   }, [openTrack]);
 
   useEffect(() => {
