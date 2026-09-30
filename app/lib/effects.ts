@@ -1,12 +1,14 @@
 import type { AudioEngine } from "./audio/engine";
 import { usePlayerStore } from "./store";
 
-/** Shared by the Effects button and the E shortcut so both engage at the stored mix. */
+/** Pushes the store's effect settings to the audio. Call after any change. */
+export function syncEffects(audioEngine: AudioEngine | null) {
+  const { effectsMode, effect, echo, reverb, filter } = usePlayerStore.getState();
+  audioEngine?.setEffects({ on: effectsMode, effect, echo, reverb, filter });
+}
+
+/** Shared by the Effects panel and the E shortcut. */
 export function toggleEffects(audioEngine: AudioEngine | null) {
-  const effects = audioEngine?.effects;
-  if (!effects) return;
-  const store = usePlayerStore.getState();
-  if (store.effectsMode) effects.bypass();
-  else effects.engage(store.echo.wet);
-  store.toggleEffectsMode();
+  usePlayerStore.getState().toggleEffectsMode();
+  syncEffects(audioEngine);
 }

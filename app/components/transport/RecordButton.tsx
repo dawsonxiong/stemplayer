@@ -32,22 +32,18 @@ export function RecordButton({ audioEngine }: RecordButtonProps) {
     <button
       type="button"
       onClick={toggle}
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
-      style={{
-        backgroundColor: "var(--color-bg-primary)",
-        border: `1px solid ${isRecording ? "var(--color-magenta-ink)" : "var(--color-border)"}`,
-      }}
+      className={`btn-icon ${isRecording ? "border-record" : ""}`}
       aria-label={label}
       aria-pressed={isRecording}
       title={label}
     >
       {isRecording ? (
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-          <rect x="2" y="2" width="10" height="10" rx="1.5" fill="var(--color-magenta-ink)" />
+          <rect x="2" y="2" width="10" height="10" rx="1.5" fill="var(--color-record)" />
         </svg>
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-          <circle cx="7" cy="7" r="5" fill="var(--color-magenta-ink)" />
+          <circle cx="7" cy="7" r="5" fill="var(--color-record)" />
         </svg>
       )}
     </button>

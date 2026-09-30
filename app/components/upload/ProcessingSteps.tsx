@@ -7,6 +7,22 @@ const STEPS: { id: Stage; label: string }[] = [
   { id: "load", label: "Load stems" },
 ];
 
+type StepState = "done" | "active" | "failed" | "pending";
+
+const LED_CLASS: Record<StepState, string> = {
+  done: "bg-led-cyan",
+  active: "bg-led-magenta",
+  failed: "bg-magenta-ink",
+  pending: "bg-well",
+};
+
+const LABEL_CLASS: Record<StepState, string> = {
+  done: "text-ink",
+  active: "text-ink",
+  failed: "text-magenta-ink",
+  pending: "text-ink-muted opacity-70",
+};
+
 /** The four stages a song goes through, each lit like one of the device's
  *  LEDs as it finishes. Stays up on failure to show which stage broke. */
 export function ProcessingSteps() {
@@ -20,13 +36,13 @@ export function ProcessingSteps() {
   const current = STEPS.findIndex((s) => s.id === stage);
 
   return (
-    <div className="panel-in mx-auto w-full max-w-xs">
+    <div className="panel-in mx-auto w-full max-w-xs lg:mx-0">
       <p aria-live="polite" className="sr-only">
         {failed ? `${STEPS[current]?.label} failed` : STEPS[current]?.label}
       </p>
       <ol aria-label="Progress" className="flex w-full flex-col">
         {STEPS.map((step, i) => {
-          const state =
+          const state: StepState =
             i < current ? "done" : i > current ? "pending" : failed ? "failed" : "active";
           const detail =
             state !== "active"
@@ -47,50 +63,21 @@ export function ProcessingSteps() {
               {i < STEPS.length - 1 && (
                 <span
                   aria-hidden="true"
-                  className="absolute top-[calc(50%+6px)] left-[4px] h-[calc(100%-12px)] w-px"
-                  style={{ backgroundColor: "var(--color-well)" }}
+                  className="absolute top-[calc(50%+6px)] left-[4px] h-[calc(100%-12px)] w-px bg-well"
                 >
                   {/* Fills top to bottom once this stage is done. */}
                   <span
-                    className="absolute inset-0 origin-top transition-transform duration-500 ease-out motion-reduce:transition-none"
-                    style={{
-                      backgroundColor: "var(--color-cyan-ink)",
-                      transform: `scaleY(${i < current ? 1 : 0})`,
-                    }}
+                    className="absolute inset-0 origin-top bg-cyan-ink transition-transform duration-500 ease-out motion-reduce:transition-none"
+                    style={{ transform: `scaleY(${i < current ? 1 : 0})` }}
                   />
                 </span>
               )}
               <span
                 aria-hidden="true"
-                className={`relative h-[9px] w-[9px] shrink-0 rounded-full transition-[background-color,box-shadow] duration-500 ease-out motion-reduce:transition-none ${state === "active" ? "step-pulse" : ""}`}
-                style={{
-                  backgroundColor:
-                    state === "done"
-                      ? "var(--color-led-cyan)"
-                      : state === "active"
-                        ? "var(--color-led-magenta)"
-                        : state === "failed"
-                          ? "var(--color-magenta-ink)"
-                          : "var(--color-well)",
-                  boxShadow:
-                    state === "done"
-                      ? "0 0 5px var(--color-led-cyan), inset 0 0 0 1px var(--color-cyan-ink)"
-                      : state === "active"
-                        ? "0 0 6px var(--color-led-magenta)"
-                        : "inset 0 1px 1px rgba(0,0,0,0.15)",
-                }}
+                className={`relative h-[9px] w-[9px] shrink-0 rounded-full transition-colors duration-500 ease-out motion-reduce:transition-none ${LED_CLASS[state]} ${state === "active" ? "step-pulse" : ""}`}
               />
               <span
-                className="text-sm transition-[color,opacity] duration-500 ease-out motion-reduce:transition-none"
-                style={{
-                  color:
-                    state === "failed"
-                      ? "var(--color-magenta-ink)"
-                      : state === "pending"
-                        ? "var(--color-text-secondary)"
-                        : "var(--color-text-primary)",
-                  opacity: state === "pending" ? 0.7 : 1,
-                }}
+                className={`text-body transition-[color,opacity] duration-500 ease-out motion-reduce:transition-none ${LABEL_CLASS[state]}`}
               >
                 {step.label}
                 <span className="sr-only">
@@ -99,10 +86,7 @@ export function ProcessingSteps() {
               </span>
               {detail && (
                 <span
-                  className="ml-auto text-xs tabular-nums"
-                  style={{
-                    color: failed ? "var(--color-magenta-ink)" : "var(--color-text-secondary)",
-                  }}
+                  className={`ml-auto text-caption tabular-nums ${failed ? "text-magenta-ink" : "text-ink-muted"}`}
                 >
                   {detail}
                 </span>

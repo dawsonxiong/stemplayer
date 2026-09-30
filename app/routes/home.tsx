@@ -2,8 +2,11 @@ import type { Route } from "./+types/home";
 import { useCallback, useEffect } from "react";
 import { Device } from "~/components/device/Device";
 import { ColorPicker } from "~/components/device/ColorPicker";
+import { DeviceIcon } from "~/components/device/DeviceIcon";
 import { MasterVolume } from "~/components/device/MasterVolume";
 import { TransportBar } from "~/components/transport/TransportBar";
+import { KeyboardShortcuts } from "~/components/transport/KeyboardShortcuts";
+import { SpeedControl } from "~/components/transport/SpeedControl";
 import { EffectsPanel } from "~/components/effects/EffectsPanel";
 import { UploadZone } from "~/components/upload/UploadZone";
 import { ProcessingSteps } from "~/components/upload/ProcessingSteps";
@@ -12,7 +15,7 @@ import { useAudioEngine } from "~/hooks/useAudioEngine";
 import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
 import { usePlayerStore, type Stage } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
-import { formatTime } from "~/lib/utils/format";
+import { trackDetails } from "~/lib/utils/format";
 import { titleFromFilename } from "~/lib/utils/title";
 import { findTrack, forgetTrack, rememberTrack } from "~/lib/history";
 import {
@@ -75,6 +78,7 @@ export default function Home() {
   const duration = usePlayerStore((s) => s.duration);
   const errorMessage = usePlayerStore((s) => s.errorMessage);
   const isOn = usePlayerStore((s) => s.isOn);
+  const uploadStage = usePlayerStore((s) => s.stage);
 
   useKeyboardShortcuts(audioEngine);
 
@@ -152,7 +156,9 @@ export default function Home() {
       const store = usePlayerStore.getState();
       store.reset();
       store.setTaskId(taskId);
-      store.setStage("load");
+      // No stage: it's one quick load, not the upload's multi-step run, so the
+      // title and a "Loading" line stand in for the steps.
+      if (knownTitle) store.setTrackTitle(knownTitle);
       store.setStatus("processing");
       setTrackParam(taskId);
 
@@ -165,7 +171,6 @@ export default function Home() {
         remember(taskId);
         // No autoplay: the browser wants a gesture before audio starts.
         store.setStatus("ready");
-        store.setStage(null);
       } catch (err) {
         // Only a missing task is gone for good; a dropped connection isn't.
         const expired = err instanceof TrackNotFoundError;
@@ -203,131 +208,107 @@ export default function Home() {
   }, []);
 
   const busy = status === "uploading" || status === "processing";
+  const hasTrack = Boolean(trackTitle) && status !== "idle";
 
   return (
-    <main className="relative z-10 flex min-h-screen flex-col items-center px-4 pt-14 pb-8 sm:pt-20 sm:pb-12">
-      <header className="flex w-full max-w-md flex-col items-center gap-3 text-center">
-        <h1 className="text-xl tracking-[0.16em] text-[var(--color-text-primary)] uppercase sm:text-2xl">
+    <main className="relative z-10 flex min-h-screen flex-col items-center px-4 pt-10 pb-8 sm:pt-14 sm:pb-12 lg:px-10 lg:pt-8">
+      <header className="flex w-full max-w-6xl justify-center lg:justify-start">
+        {/* The product's own logotype, so the one place type is set in caps. */}
+        <h1 className="flex items-center gap-3 text-wordmark text-ink uppercase">
+          <DeviceIcon className="h-7 w-auto" />
           Stem Player
         </h1>
-        {trackTitle && status !== "idle" ? (
-          <div className="flex max-w-full flex-col items-center gap-1">
-            <p className="line-clamp-2 text-base text-balance text-[var(--color-text-primary)]">
-              {trackTitle}
-            </p>
-            {/* While it's processing, the steps below say what's happening. */}
-            {status === "ready" && (
-              <p className="text-xs text-[var(--color-text-secondary)] tabular-nums">
-                {trackDetails(duration, trackDate)}
-              </p>
-            )}
-          </div>
-        ) : busy ? (
-          <p className="text-sm text-[var(--color-text-secondary)]">Loading your song</p>
-        ) : status !== "ready" ? (
-          <p className="text-sm text-balance text-[var(--color-text-secondary)]">
-            Split a song into its stems, just like the real thing
-          </p>
-        ) : null}
       </header>
 
-      <div className="w-full">
-        <Device audioEngine={audioEngine} />
-      </div>
-
-      {/* Stacked above the 3D canvas, which overflows down into this space. */}
-      <div className="relative z-10 mt-6 flex w-full max-w-sm flex-col gap-4">
-        {status === "ready" && !isOn && (
-          <p className="text-center text-sm text-[var(--color-text-secondary)]">
-            The device is off. Hold its centre button for a second, or{" "}
-            <button
-              type="button"
-              onClick={togglePower}
-              className="text-[var(--color-text-primary)] underline underline-offset-4"
-            >
-              turn it on
-            </button>
-            .
-          </p>
-        )}
-
-        <TransportBar audioEngine={audioEngine} />
-        <EffectsPanel audioEngine={audioEngine} />
-        <ProcessingSteps />
-
-        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 pb-2">
-          <ColorPicker />
-          {/* Nothing to turn up until a song has been uploaded. */}
-          {status !== "idle" && <MasterVolume audioEngine={audioEngine} />}
+      {/* Stacked on phones; on wide screens the device takes the left and the
+          controls sit beside it, the pair centred in the window. */}
+      <div className="flex w-full flex-1 flex-col items-center lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-center lg:gap-16">
+        <div className="flex w-full flex-col items-center">
+          <Device audioEngine={audioEngine} />
+          {/* Under the device it recolours, out of the way while the steps show. */}
+          {!busy && (
+            <div className="panel-in relative z-10 mt-5">
+              <ColorPicker />
+            </div>
+          )}
         </div>
 
-        {status === "error" && errorMessage && (
-          <p
-            role="alert"
-            className="text-center text-sm text-balance text-[var(--color-magenta-ink)]"
-          >
-            {errorMessage}
-          </p>
-        )}
+        {/* Stacked above the 3D canvas, which overflows down into this space. */}
+        <div className="relative z-10 mt-8 flex w-full max-w-sm flex-col gap-5 lg:mt-0 lg:max-w-none">
+          {hasTrack ? (
+            <div className="flex flex-col items-center gap-1.5 text-center lg:items-start lg:text-left">
+              <p className="line-clamp-3 text-display text-balance text-ink">{trackTitle}</p>
+              {status === "ready" ? (
+                <p className="text-caption text-ink-muted tabular-nums">
+                  {trackDetails(duration, trackDate)}
+                </p>
+              ) : (
+                // An upload's steps say what's happening; a reopened song has none.
+                busy && !uploadStage && <p className="text-caption text-ink-muted">Loading</p>
+              )}
+            </div>
+          ) : busy ? (
+            <p className="text-center text-body text-ink-muted lg:text-left">Loading your song</p>
+          ) : (
+            <div className="flex flex-col gap-3 text-center lg:text-left">
+              <h2 className="text-display text-balance text-ink">
+                Split any song into vocals, drums, bass and everything else.
+              </h2>
+              <p className="text-body text-pretty text-ink-muted">
+                Then mix them live by dragging the four lit grooves on the device.
+              </p>
+            </div>
+          )}
 
-        <UploadZone onFileSelected={handleFileSelected} />
-        {(status === "idle" || status === "error") && (
-          <HistoryList onOpen={(entry) => void openTrack(entry.taskId, entry.title)} />
-        )}
+          {status === "ready" && !isOn && (
+            <p className="text-center text-body text-ink-muted lg:text-left">
+              The device is off. Hold its centre button for a second, or{" "}
+              <button
+                type="button"
+                onClick={togglePower}
+                className="text-ink underline underline-offset-4"
+              >
+                turn it on
+              </button>
+              .
+            </p>
+          )}
+
+          <TransportBar audioEngine={audioEngine} />
+          <EffectsPanel audioEngine={audioEngine} />
+          <ProcessingSteps />
+
+          {status === "ready" && (
+            <div className="panel-in flex flex-wrap items-center justify-center gap-x-8 gap-y-3 lg:justify-start">
+              <MasterVolume audioEngine={audioEngine} />
+              <SpeedControl audioEngine={audioEngine} />
+            </div>
+          )}
+
+          {status === "error" && errorMessage && (
+            <p
+              role="alert"
+              className="text-center text-body text-balance text-magenta-ink lg:text-left"
+            >
+              {errorMessage}
+            </p>
+          )}
+
+          <UploadZone onFileSelected={handleFileSelected} />
+          {(status === "idle" || status === "error") && (
+            <HistoryList onOpen={(entry) => void openTrack(entry.taskId, entry.title)} />
+          )}
+
+          {status === "ready" && (
+            <footer className="mt-4 flex w-full flex-wrap items-center justify-center gap-x-3 gap-y-5 lg:justify-start">
+              <button type="button" onClick={handleNewTrack} className="btn-secondary">
+                Load another song
+              </button>
+              <KeyboardShortcuts />
+            </footer>
+          )}
+        </div>
       </div>
-
-      {status === "ready" && (
-        <footer className="relative z-10 mt-10 flex w-full max-w-sm flex-col items-center gap-5">
-          <button
-            type="button"
-            onClick={handleNewTrack}
-            className="text-sm text-[var(--color-text-primary)] underline-offset-4 hover:underline"
-          >
-            Load another song
-          </button>
-
-          <ul
-            aria-label="Keyboard shortcuts"
-            // Touch screens have no keyboard to use them with.
-            className="hidden flex-wrap pointer-fine:flex justify-center gap-x-5 gap-y-2 text-xs text-[var(--color-text-secondary)]"
-          >
-            {SHORTCUTS.map(([keys, action]) => (
-              <li key={action} className="flex items-center gap-1.5">
-                <kbd
-                  className="rounded px-1.5 py-0.5 font-[inherit] text-[var(--color-text-primary)]"
-                  style={{ boxShadow: "inset 0 0 0 1px var(--color-border)" }}
-                >
-                  {keys}
-                </kbd>
-                {action}
-              </li>
-            ))}
-          </ul>
-        </footer>
-      )}
     </main>
   );
 }
-
-const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-
-/** "2:04, added 28 Sep 2026". Either part is left out when it isn't known. */
-function trackDetails(duration: number, date: number | null) {
-  const parts: string[] = [];
-  if (duration > 0) parts.push(formatTime(duration));
-  if (date) parts.push(`added ${DATE_FORMAT.format(date)}`);
-  const text = parts.join(", ");
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-const SHORTCUTS: [string, string][] = [
-  ["Space", "Play or pause"],
-  ["1–4", "Mute a stem"],
-  ["E", "Echo"],
-  ["L", "Loop"],
-  ["← →", "Seek"],
-];

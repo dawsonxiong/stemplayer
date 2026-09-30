@@ -21,7 +21,7 @@ export function MasterVolume({ audioEngine }: MasterVolumeProps) {
 
   return (
     <div className="flex items-center gap-3">
-      <label htmlFor={id} className="text-xs text-[var(--color-text-secondary)]">
+      <label htmlFor={id} className="text-caption text-ink-muted">
         Volume
       </label>
       <input
@@ -37,14 +37,11 @@ export function MasterVolume({ audioEngine }: MasterVolumeProps) {
         style={
           {
             "--slider-pct": `${masterVolume * 100}%`,
-            "--slider-color": "var(--color-text-primary)",
+            "--slider-color": "var(--color-ink)",
           } as React.CSSProperties
         }
       />
-      <output
-        htmlFor={id}
-        className="w-7 text-right text-xs tabular-nums text-[var(--color-text-secondary)]"
-      >
+      <output htmlFor={id} className="w-7 text-right text-caption tabular-nums text-ink-muted">
         {Math.round(masterVolume * 100)}
       </output>
     </div>

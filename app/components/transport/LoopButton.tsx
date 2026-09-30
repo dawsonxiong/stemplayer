@@ -17,12 +17,8 @@ export function LoopButton({ audioEngine }: LoopButtonProps) {
     <button
       type="button"
       onClick={() => cycleLoop(audioEngine)}
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
-      style={{
-        backgroundColor: "var(--color-bg-primary)",
-        // Dashed while waiting for the out point, solid once the loop is set.
-        border: `1px ${pending ? "dashed" : "solid"} ${active || pending ? "var(--color-cyan-ink)" : "var(--color-border)"}`,
-      }}
+      // Dashed while waiting for the out point, solid once the loop is set.
+      className={`btn-icon ${pending ? "border-dashed" : ""} ${active || pending ? "border-cyan-ink" : ""}`}
       aria-label={label}
       aria-pressed={active}
       title={`${label} (L)`}
@@ -32,7 +28,7 @@ export function LoopButton({ audioEngine }: LoopButtonProps) {
         height="16"
         viewBox="0 0 16 16"
         fill="none"
-        stroke={active || pending ? "var(--color-cyan-ink)" : "var(--color-text-secondary)"}
+        stroke={active || pending ? "var(--color-cyan-ink)" : "var(--color-ink-muted)"}
         strokeWidth="1.5"
         strokeLinecap="round"
         strokeLinejoin="round"

@@ -21,11 +21,22 @@ export const DEVICE_COLORS = {
 
 export type DeviceColor = keyof typeof DEVICE_COLORS;
 
+// One plays at a time, picked like the device's effects menu.
+export const EFFECT_NAMES = ["echo", "reverb", "filter"] as const;
+export type EffectName = (typeof EFFECT_NAMES)[number];
+
 export const EFFECTS = {
   echo: { min: 0.05, max: 1.0, default: 0.3 },
   feedback: { min: 0, max: 0.85, default: 0.4 },
-  gate: { min: 0, max: 1.0, default: 0 },
+  /** Reverb tail length in seconds. */
+  reverbSize: { min: 0.4, max: 4, default: 1.8 },
+  /** Filter resonance (Q). */
+  resonance: { min: 0.7, max: 12, default: 4 },
 };
+
+// Playback rates, slowest to fastest. Pitch moves with speed, like a
+// turntable, rather than being held.
+export const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5] as const;
 
 export const MAX_FILE_SIZE_MB = 50;
 export const MAX_DURATION_MINUTES = 10;

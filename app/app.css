@@ -1,36 +1,144 @@
 @import "tailwindcss" source(".");
 
+/* The design system. Tailwind's default colour, type and radius scales are
+   switched off, so these tokens are the only values the utilities offer:
+   `text-body`, `bg-raised`, `rounded-panel` and so on. Reach for one of them
+   rather than an arbitrary value; add a token here if none fits. */
 @theme {
-  --font-sans:
-    "Geist", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-    "Segoe UI Symbol", "Noto Color Emoji";
+  /* One family for everything, as on the real product's store. */
+  --font-*: initial;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
-  --color-bg-primary: #e8e3d4;
-  --color-bg-secondary: #ddd8c8;
-  --color-bg-surface: #d7d1c1;
-  /* Both text tones clear 4.5:1 on bg-primary and bg-secondary. */
-  --color-text-primary: #514e4c;
-  --color-text-secondary: #625d57;
-  --color-device-body: #aa8d80;
-  --color-border: rgba(0, 0, 0, 0.12);
+  /* Type scale. Each step sets its own line height and tracking, so a size
+     class is all a piece of text needs. */
+  --text-*: initial;
+  /* Headlines and the song title; grows from 20px on phones to 28px. */
+  --text-display: clamp(1.25rem, 0.9rem + 1.2vw, 1.75rem);
+  --text-display--line-height: 1.25;
+  --text-display--letter-spacing: -0.01em;
+  /* Anything read as a sentence: buttons, list items, notices. */
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.5;
+  /* Supporting detail: times, dates, hints, control labels. */
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.4;
+  /* Printed-on labels, like the stem names under the sliders. Set in caps. */
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 1.2;
+  --text-micro--letter-spacing: 0.12em;
+  --text-micro--font-weight: 500;
+
+  /* The Stem Player wordmark beside its icon, the only text tracked this
+     wide. Set in caps. */
+  --text-wordmark: 1.125rem;
+  --text-wordmark--line-height: 1;
+  --text-wordmark--letter-spacing: 0.22em;
+
+  --color-*: initial;
+  --color-page: #e8e3d4;
+  /* Panels and hover fills, one step darker than the page. */
+  --color-raised: #ddd8c8;
+  /* Both ink tones clear 4.5:1 on page and raised. */
+  --color-ink: #514e4c;
+  --color-ink-muted: #625d57;
+  --color-line: rgba(0, 0, 0, 0.12);
+  --color-line-strong: rgba(0, 0, 0, 0.2);
+  /* The empty track of a slider or scrubber. */
   --color-well: rgba(0, 0, 0, 0.1);
 
   /* The device's own LED ramp runs cyan at the hub to magenta at the rim.
      The raw values only glow; the -ink shades are dark enough for strokes,
-     fills and focus rings on the cream page. */
+     fills and focus rings on the cream page. Cyan ink means "on", magenta
+     ink means focus or an error. */
   --color-led-cyan: #4cc2db;
   --color-led-magenta: #da66d6;
   --color-cyan-ink: #1c6f80;
   --color-magenta-ink: #9a2c96;
+
+  /* Universal "recording" red, muted to sit on the cream page. */
+  --color-record: #c63a2f;
+
+  /* Circles and pills use rounded-full. */
+  --radius-*: initial;
+  --radius-panel: 0.75rem;
+  --radius-row: 0.5rem;
+  --radius-key: 0.25rem;
+}
+
+/* Buttons. Colour classes set alongside one of these override its colours. */
+@utility btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: calc(infinity * 1px);
+  padding: 0.75rem 1.5rem 0.75rem 1.25rem;
+  background-color: var(--color-ink);
+  color: var(--color-page);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  transition-property: background-color, scale;
+  transition-duration: 150ms;
+  &:active {
+    scale: 0.98;
+  }
+}
+@utility btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+  border-radius: calc(infinity * 1px);
+  border: 1px solid var(--color-line);
+  padding: 0.625rem 1.25rem;
+  color: var(--color-ink);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  transition-property: background-color, scale;
+  transition-duration: 150ms;
+  &:hover {
+    background-color: var(--color-raised);
+  }
+  &:active {
+    scale: 0.98;
+  }
+}
+/* The round transport buttons: play, loop, record. */
+@utility btn-icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: calc(infinity * 1px);
+  border: 1px solid var(--color-line);
+  background-color: var(--color-page);
+  transition-property: scale, border-color;
+  transition-duration: 150ms;
+  &:active {
+    scale: 0.95;
+  }
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+}
+
+/* Height of the 3D scene's layout box; the device scales with it. Beside the
+   controls on wide screens it has room to be the biggest thing on the page. */
+:root {
+  --scene-height: clamp(340px, 45vw, 480px);
+}
+@media (min-width: 64rem) {
+  :root {
+    --scene-height: clamp(460px, 68vh, 680px);
+  }
 }
 
 html,
 body {
-  /* The store sets everything in Geist Mono, headings included */
   font-family: var(--font-mono);
-  background-color: var(--color-bg-primary);
-  color: var(--color-text-primary);
+  background-color: var(--color-page);
+  color: var(--color-ink);
   min-height: 100vh;
   overflow-x: hidden;
 }

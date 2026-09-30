@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { usePlayerStore } from "~/lib/store";
 import { MAX_FILE_SIZE_MB, MAX_DURATION_MINUTES, ACCEPTED_FORMATS } from "~/lib/constants";
 
@@ -49,16 +49,6 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
     [onFileSelected],
   );
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragOver(false);
-      const file = e.dataTransfer.files[0];
-      if (file) validateAndSubmit(file);
-    },
-    [validateAndSubmit],
-  );
-
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -68,10 +58,56 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
     [validateAndSubmit],
   );
 
-  if (status !== "idle" && status !== "error") return null;
+  const accepting = status === "idle" || status === "error";
+
+  // The whole window is the drop target, so a song dropped on the device or
+  // beside it counts too, not only one dropped on the button.
+  useEffect(() => {
+    if (!accepting) return;
+    // dragenter and dragleave fire for every child crossed; count them so
+    // moving over the page doesn't flicker the drop state off.
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes("Files") ?? false;
+
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setIsDragOver(true);
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setIsDragOver(false);
+    };
+    const onOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setIsDragOver(false);
+      const file = e.dataTransfer?.files[0];
+      if (file) validateAndSubmit(file);
+    };
+
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("drop", onDrop);
+      setIsDragOver(false);
+    };
+  }, [accepting, validateAndSubmit]);
+
+  if (!accepting) return null;
 
   return (
-    <div className="panel-in w-full">
+    <div className="panel-in flex w-full flex-col items-center gap-3 lg:items-start">
       <input
         ref={inputRef}
         type="file"
@@ -79,51 +115,41 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
         className="hidden"
         onChange={handleChange}
       />
-      <button
-        type="button"
-        className="flex w-full cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl px-4 py-6 transition-colors"
-        style={{
-          backgroundColor: isDragOver ? "var(--color-bg-primary)" : "var(--color-bg-secondary)",
-          border: `1px ${isDragOver ? "solid var(--color-cyan-ink)" : "dashed rgba(0,0,0,0.22)"}`,
-        }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={() => setIsDragOver(false)}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
-        aria-describedby={error ? errorId : undefined}
-      >
-        <svg
-          width="22"
-          height="22"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          aria-hidden="true"
-          className="mb-1 text-[var(--color-text-secondary)]"
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+        <button
+          type="button"
+          className={`btn-primary cursor-pointer ${isDragOver ? "bg-cyan-ink" : ""}`}
+          onClick={() => inputRef.current?.click()}
+          aria-describedby={error ? errorId : undefined}
         >
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>
-
-        <span className="text-sm text-[var(--color-text-primary)]">
-          {isDragOver ? "Drop to split it into stems" : "Drop a song or choose a file"}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          {isDragOver ? "Drop to split it" : "Choose a song"}
+        </button>
+        {/* Touch screens have no files to drag in. */}
+        <span aria-hidden="true" className="hidden text-body text-ink-muted pointer-fine:inline">
+          {isDragOver ? "anywhere on the page" : "or drop one anywhere"}
         </span>
-
-        <span className="text-xs text-[var(--color-text-secondary)]">
-          Up to {MAX_FILE_SIZE_MB}MB and {MAX_DURATION_MINUTES} minutes
-        </span>
-      </button>
+      </div>
 
       {error && (
         <p
           id={errorId}
           role="alert"
-          className="mt-2 text-center text-xs text-[var(--color-magenta-ink)]"
+          className="text-center text-caption text-balance text-magenta-ink lg:text-left"
         >
           {error}
         </p>

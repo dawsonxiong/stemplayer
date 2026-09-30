@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { STEMS, type StemName } from "~/lib/constants";
+import { audibleLevels, setStemIsolated } from "~/lib/mix";
 import { usePlayerStore } from "~/lib/store";
 import { useAnimationFrame } from "~/hooks/useAnimationFrame";
 import type { AudioEngine } from "~/lib/audio/engine";
@@ -16,6 +17,7 @@ export function Device({ audioEngine }: DeviceProps) {
   const status = usePlayerStore((s) => s.status);
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const volumes = usePlayerStore((s) => s.volumes);
+  const isolated = usePlayerStore((s) => s.isolated);
   const [amplitudes, setAmplitudes] = useState<Record<StemName, number>>({
     vocals: 0,
     drums: 0,
@@ -72,6 +74,12 @@ export function Device({ audioEngine }: DeviceProps) {
     [audioEngine],
   );
 
+  // Holding a groove's rim plays that stem alone until it's let go.
+  const handleHoldStem = useCallback(
+    (stem: StemName, held: boolean) => setStemIsolated(audioEngine, stem, held),
+    [audioEngine],
+  );
+
   const handleTogglePower = useCallback(() => {
     const store = usePlayerStore.getState();
     const next = !store.isOn;
@@ -86,23 +94,19 @@ export function Device({ audioEngine }: DeviceProps) {
   return (
     <div className="flex w-full flex-col items-center gap-5">
       <DeviceScene
-        volumes={volumes}
+        volumes={audibleLevels(volumes, isolated)}
         amplitudes={amplitudes}
         onStemVolume={handleStemVolume}
         onTogglePlay={handleTogglePlay}
         onVolumeStep={handleVolumeStep}
         onTogglePower={handleTogglePower}
+        onHoldStem={handleHoldStem}
       />
 
       {status === "ready" && (
         <div role="group" aria-label="Stem levels" className="relative z-10 flex gap-7">
           {stemNames.map((name) => (
-            <Slider
-              key={name}
-              stemName={name}
-              audioEngine={audioEngine}
-              amplitude={amplitudes[name]}
-            />
+            <Slider key={name} stemName={name} audioEngine={audioEngine} />
           ))}
         </div>
       )}

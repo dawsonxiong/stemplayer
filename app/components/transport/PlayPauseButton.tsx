@@ -27,32 +27,16 @@ export function PlayPauseButton({ audioEngine }: PlayPauseButtonProps) {
       type="button"
       onClick={toggle}
       disabled={!isOn}
-      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
-      style={{
-        backgroundColor: "var(--color-bg-primary)",
-        border: "1px solid var(--color-border)",
-      }}
+      className="btn-icon"
       aria-label={isPlaying ? "Pause" : "Play"}
     >
       {isPlaying ? (
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 16 16"
-          fill="var(--color-text-primary)"
-          aria-hidden="true"
-        >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-ink)" aria-hidden="true">
           <rect x="3" y="2" width="4" height="12" rx="1" />
           <rect x="9" y="2" width="4" height="12" rx="1" />
         </svg>
       ) : (
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 16 16"
-          fill="var(--color-text-primary)"
-          aria-hidden="true"
-        >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="var(--color-ink)" aria-hidden="true">
           <path d="M4 2.5v11l10-5.5z" />
         </svg>
       )}

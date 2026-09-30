@@ -12,9 +12,11 @@ interface DeviceSceneProps {
   onTogglePlay: () => void;
   onVolumeStep: (delta: number) => void;
   onTogglePower: () => void;
+  onHoldStem: (stem: StemName, held: boolean) => void;
 }
 
-const SCENE_HEIGHT = "clamp(340px, 45vw, 480px)";
+// Set in app.css, so the page layout can size the scene per breakpoint.
+const SCENE_HEIGHT = "var(--scene-height)";
 
 // Grooves clockwise from the top, matching the 3D model's arm order.
 const GROOVES: { stem: StemName; rotate: number }[] = [
@@ -43,10 +45,7 @@ function FlatDevice({ volumes, note }: { volumes: Record<StemName, number>; note
             "inset 0 -10px 24px rgba(0,0,0,0.12), inset 0 8px 18px rgba(255,255,255,0.18), 0 18px 40px rgba(80,60,40,0.18)",
         }}
       >
-        <div
-          className="absolute top-1/2 left-1/2 h-[16%] w-[16%] -translate-x-1/2 -translate-y-1/2 rounded-full"
-          style={{ boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.15)" }}
-        />
+        <div className="absolute top-1/2 left-1/2 h-[16%] w-[16%] -translate-x-1/2 -translate-y-1/2 rounded-full inset-ring inset-ring-line-strong" />
         {GROOVES.map(({ stem, rotate }) => {
           const lit = isOn ? Math.ceil(volumes[stem] * LED_PALETTE.length - 0.0001) : 0;
           return (
@@ -56,16 +55,13 @@ function FlatDevice({ volumes, note }: { volumes: Record<StemName, number>; note
               style={{ transform: `rotate(${rotate}deg)` }}
             >
               {/* Hub to rim runs up the page before rotation. */}
-              <div
-                className="absolute bottom-[calc(0.11*min(280px,70vw))] left-[-9px] flex h-[calc(0.3*min(280px,70vw))] w-[18px] flex-col-reverse items-center justify-between rounded-full py-1"
-                style={{ backgroundColor: "rgba(0,0,0,0.1)" }}
-              >
+              <div className="absolute bottom-[calc(0.11*min(280px,70vw))] left-[-9px] flex h-[calc(0.3*min(280px,70vw))] w-[18px] flex-col-reverse items-center justify-between rounded-full bg-well py-1">
                 {LED_PALETTE.map((colour, i) => (
                   <span
                     key={colour}
                     className="h-2.5 w-2.5 rounded-full"
                     style={{
-                      backgroundColor: i < lit ? colour : "rgba(0,0,0,0.08)",
+                      backgroundColor: i < lit ? colour : "var(--color-well)",
                       boxShadow: i < lit ? `0 0 6px ${colour}` : undefined,
                     }}
                   />
@@ -76,9 +72,7 @@ function FlatDevice({ volumes, note }: { volumes: Record<StemName, number>; note
         })}
       </div>
       {note && (
-        <p className="max-w-xs text-center text-xs text-balance text-[var(--color-text-secondary)]">
-          {note}
-        </p>
+        <p className="max-w-xs text-center text-caption text-balance text-ink-muted">{note}</p>
       )}
     </div>
   );
@@ -115,6 +109,7 @@ export function DeviceScene({
   onTogglePlay,
   onVolumeStep,
   onTogglePower,
+  onHoldStem,
 }: DeviceSceneProps) {
   const [mounted, setMounted] = useState(false);
   const [contextLost, setContextLost] = useState(false);
@@ -144,6 +139,7 @@ export function DeviceScene({
                 onTogglePlay={onTogglePlay}
                 onVolumeStep={onVolumeStep}
                 onTogglePower={onTogglePower}
+                onHoldStem={onHoldStem}
                 onContextLost={() => setContextLost(true)}
                 onReady={() => setReady(true)}
               />

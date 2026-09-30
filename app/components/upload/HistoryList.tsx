@@ -1,7 +1,5 @@
 import { useHistory, type HistoryEntry } from "~/lib/history";
-import { formatTime } from "~/lib/utils/format";
-
-const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+import { trackDetails } from "~/lib/utils/format";
 
 interface HistoryListProps {
   onOpen: (entry: HistoryEntry) => void;
@@ -13,31 +11,21 @@ export function HistoryList({ onOpen }: HistoryListProps) {
   if (entries.length === 0) return null;
 
   return (
-    <section aria-labelledby="history-heading" className="panel-in flex w-full flex-col gap-2 pt-2">
-      <h2
-        id="history-heading"
-        className="text-xs tracking-[0.12em] text-[var(--color-text-secondary)] uppercase"
-      >
-        Recent
+    <section aria-labelledby="history-heading" className="panel-in mt-4 flex w-full flex-col gap-1">
+      <h2 id="history-heading" className="text-caption text-ink-muted">
+        Recent songs
       </h2>
       <ul className="flex flex-col">
         {entries.map((entry) => (
-          <li key={entry.taskId}>
+          <li key={entry.taskId} className="border-t border-line first:border-t-0">
             <button
               type="button"
               onClick={() => onOpen(entry)}
-              className="-mx-2 flex w-[calc(100%+1rem)] items-baseline gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-bg-secondary)]"
+              className="-mx-2 flex w-[calc(100%+1rem)] flex-col gap-0.5 rounded-row px-2 py-2.5 text-left transition-colors hover:bg-raised"
             >
-              <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-text-primary)]">
-                {entry.title}
-              </span>
-              <span className="shrink-0 text-xs text-[var(--color-text-secondary)] tabular-nums">
-                {[
-                  entry.duration > 0 && formatTime(entry.duration),
-                  DATE_FORMAT.format(entry.addedAt),
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+              <span className="line-clamp-2 text-body text-ink">{entry.title}</span>
+              <span className="text-caption text-ink-muted tabular-nums">
+                {trackDetails(entry.duration, entry.addedAt)}
               </span>
             </button>
           </li>

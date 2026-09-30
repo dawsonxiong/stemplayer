@@ -16,13 +16,7 @@ export function TransportBar({ audioEngine }: TransportBarProps) {
   if (status !== "ready") return null;
 
   return (
-    <div
-      className="panel-in flex w-full items-center gap-3 rounded-xl px-3 py-2"
-      style={{
-        backgroundColor: "var(--color-bg-secondary)",
-        border: "1px solid var(--color-border)",
-      }}
-    >
+    <div className="panel-in flex w-full items-center gap-3 rounded-panel border border-line bg-raised px-3 py-2">
       <PlayPauseButton audioEngine={audioEngine} />
       <Scrubber audioEngine={audioEngine} />
       <TimeDisplay />

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DeviceColor, StemName } from "./constants";
+import type { DeviceColor, EffectName, StemName } from "./constants";
 
 /** Where a song is in the pipeline. Kept after a failure to show which broke. */
 export type Stage = "upload" | "start" | "separate" | "load";
@@ -22,11 +22,18 @@ interface PlayerState {
 
   // Stem volumes (0.0 - 1.0)
   volumes: Record<StemName, number>;
+  // Stems played on their own; the rest are silent until none are left.
+  isolated: StemName[];
 
-  // Effects
+  // Playback rate, one of SPEEDS.
+  speed: number;
+
+  // Effects. effectsMode is on or off; effect is the one that plays.
   effectsMode: boolean;
+  effect: EffectName;
   echo: { delayTime: number; feedback: number; wet: number };
-  gate: { threshold: number; active: boolean };
+  reverb: { size: number; wet: number };
+  filter: { cutoff: number; resonance: number };
 
   // Loop. Only a start means the out point is still to be set.
   loop: { start: number | null; end: number | null };
@@ -45,6 +52,11 @@ interface PlayerState {
 
   // Actions
   setVolume: (stem: StemName, value: number) => void;
+  setIsolated: (stems: StemName[]) => void;
+  setSpeed: (speed: number) => void;
+  setEffect: (effect: EffectName) => void;
+  setReverb: (params: Partial<PlayerState["reverb"]>) => void;
+  setFilter: (params: Partial<PlayerState["filter"]>) => void;
   setStatus: (status: PlayerState["status"]) => void;
   setPlaying: (playing: boolean) => void;
   setCurrentTime: (time: number) => void;
@@ -77,9 +89,13 @@ const initialState = {
   currentTime: 0,
   duration: 0,
   volumes: { vocals: 1, drums: 1, bass: 1, other: 1 },
+  isolated: [] as StemName[],
+  speed: 1,
   effectsMode: false,
+  effect: "echo" as EffectName,
   echo: { delayTime: 0.3, feedback: 0.4, wet: 0.5 },
-  gate: { threshold: 0, active: false },
+  reverb: { size: 1.8, wet: 0.4 },
+  filter: { cutoff: 0.55, resonance: 4 },
   loop: { start: null, end: null },
   isRecording: false,
   deviceColor: "tan" as const,
@@ -91,6 +107,11 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   ...initialState,
 
   setVolume: (stem, value) => set((s) => ({ volumes: { ...s.volumes, [stem]: value } })),
+  setIsolated: (isolated) => set({ isolated }),
+  setSpeed: (speed) => set({ speed }),
+  setEffect: (effect) => set({ effect }),
+  setReverb: (params) => set((s) => ({ reverb: { ...s.reverb, ...params } })),
+  setFilter: (params) => set((s) => ({ filter: { ...s.filter, ...params } })),
   setStatus: (status) => set({ status }),
   setPlaying: (isPlaying) => set({ isPlaying }),
   setCurrentTime: (currentTime) => set({ currentTime }),

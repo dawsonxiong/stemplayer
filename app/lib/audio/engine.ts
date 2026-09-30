@@ -1,5 +1,5 @@
 import type { StemName } from "../constants";
-import { EffectsChain } from "./effects";
+import { EffectsChain, type EffectsSettings } from "./effects";
 import { MixRecorder } from "./recorder";
 
 interface StemNode {
@@ -13,7 +13,12 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private stems: Map<StemName, StemNode> = new Map();
   private masterGain: GainNode | null = null;
+  /** Where the stems meet, ahead of the effects. */
+  private bus: GainNode | null = null;
   private _effects: EffectsChain | null = null;
+  /** Each stem's own level; isolation silences on top without losing it. */
+  private levels: Map<StemName, number> = new Map();
+  private isolated: Set<StemName> = new Set();
   private _recorder: MixRecorder | null = null;
   /** Survives the gain node, which only exists once a track has been loaded. */
   private _masterVolume = 1;
@@ -35,13 +40,16 @@ export class AudioEngine {
     this.dispose();
 
     const ctx = this.getContext();
-    this._effects = new EffectsChain(ctx);
+    this.bus = ctx.createGain();
+    this._effects = new EffectsChain(ctx, this.bus, this.masterGain!);
 
     const entries = await Promise.all(
       Object.entries(urls).map(async ([name, url]) => {
         const audio = new Audio();
         audio.crossOrigin = "anonymous";
         audio.preload = "auto";
+        // Speed changes pitch too, like a turntable.
+        audio.preservesPitch = false;
         audio.src = url;
 
         // "canplay" not "canplaythrough" — the latter never fires reliably in
@@ -75,10 +83,7 @@ export class AudioEngine {
 
       source.connect(gain);
       gain.connect(analyser);
-      analyser.connect(this.masterGain!);
-
-      // Insert effects chain between gain and analyser
-      this._effects.createChain(name, gain, analyser);
+      analyser.connect(this.bus);
 
       this.stems.set(name, { audio, source, gain, analyser });
     }
@@ -109,10 +114,31 @@ export class AudioEngine {
   }
 
   setVolume(stemName: StemName, value: number): void {
+    this.levels.set(stemName, value);
+    this.applyGain(stemName);
+  }
+
+  /** Plays only these stems; an empty list plays them all again. */
+  setIsolated(stems: StemName[]): void {
+    this.isolated = new Set(stems);
+    for (const name of this.stems.keys()) this.applyGain(name);
+  }
+
+  private applyGain(stemName: StemName): void {
     const stem = this.stems.get(stemName);
     if (!stem) return;
+    const muted = this.isolated.size > 0 && !this.isolated.has(stemName);
+    const value = muted ? 0 : (this.levels.get(stemName) ?? 1);
     const ctx = this.getContext();
     stem.gain.gain.linearRampToValueAtTime(value, ctx.currentTime + 0.02);
+  }
+
+  setSpeed(rate: number): void {
+    for (const [, stem] of this.stems) stem.audio.playbackRate = rate;
+  }
+
+  setEffects(settings: EffectsSettings): void {
+    this._effects?.apply(settings);
   }
 
   /** Jump back to `start` whenever playback reaches `end`. A timer rather than
@@ -141,10 +167,6 @@ export class AudioEngine {
     const data = new Uint8Array(stem.analyser.frequencyBinCount);
     stem.analyser.getByteFrequencyData(data);
     return data;
-  }
-
-  get effects(): EffectsChain | null {
-    return this._effects;
   }
 
   get recorder(): MixRecorder | null {
@@ -178,6 +200,12 @@ export class AudioEngine {
     this.setLoop(null, null);
     this._effects?.dispose();
     this._effects = null;
+    this.bus?.disconnect();
+    this.bus = null;
+    // A new track starts at full mix, as the store does. New audio elements
+    // start at normal speed on their own.
+    this.levels.clear();
+    this.isolated.clear();
     this._recorder = null;
     for (const [, stem] of this.stems) {
       stem.audio.pause();

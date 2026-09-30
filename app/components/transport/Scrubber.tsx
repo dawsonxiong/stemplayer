@@ -114,36 +114,27 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
       onPointerCancel={handlePointerUp}
       onKeyDown={handleKeyDown}
     >
-      <div
-        className="relative h-1.5 w-full rounded-full"
-        style={{ backgroundColor: "var(--color-well)" }}
-      >
+      <div className="relative h-1.5 w-full rounded-full bg-well">
         {/* Loop region, or just its in point while the out point is pending */}
         {loop.start !== null && (
           <div
-            className="absolute -top-1 -bottom-1 rounded-sm"
+            className="absolute -top-1 -bottom-1 rounded-key bg-cyan-ink/30"
             style={{
               left: `${pct(loop.start)}%`,
               width: loop.end !== null ? `${pct(loop.end - loop.start)}%` : "2px",
-              backgroundColor: "var(--color-cyan-ink)",
-              opacity: 0.3,
             }}
           />
         )}
 
         <div
-          className="absolute top-0 left-0 h-full rounded-full"
-          style={{
-            width: `${progress}%`,
-            backgroundColor: "var(--color-text-primary)",
-          }}
+          className="absolute top-0 left-0 h-full rounded-full bg-ink"
+          style={{ width: `${progress}%` }}
         />
 
         <div
-          className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          className="absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full bg-ink opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
           style={{
             left: `calc(${progress}% - 6px)`,
-            backgroundColor: "var(--color-text-primary)",
             opacity: isSeeking ? 1 : undefined,
           }}
         />

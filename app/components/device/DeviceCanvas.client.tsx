@@ -114,6 +114,8 @@ interface Props {
   onTogglePlay?: () => void;
   onVolumeStep?: (delta: number) => void;
   onTogglePower?: () => void;
+  /** A groove's rim is being held (true) or let go (false). */
+  onHoldStem?: (stem: StemName, held: boolean) => void;
   /** The GPU dropped the context; the page swaps in a static device. */
   onContextLost?: () => void;
   /** The model has drawn a frame, so the loader can hand over. */
@@ -134,6 +136,34 @@ const ROCKER_SPLIT_DEG = 15;
 // The real device powers on/off by holding the top button for a couple of
 // seconds; a short press is play/pause.
 const POWER_HOLD_MS = 1000;
+
+// Holding a groove's outer end plays that stem alone, as on the device.
+const ISOLATE_FROM = 0.8;
+const ISOLATE_HOLD_MS = 350;
+
+interface DragState {
+  mode: "none" | "button" | "groove" | "volume";
+  stem: StemName | null;
+  delta: number;
+  sx: number;
+  sy: number;
+  t0: number;
+  firedHold: boolean;
+  /** The held stem is playing alone and must be released on let-go. */
+  isolating: boolean;
+}
+
+// A fresh object each time: timers write to the current drag state.
+const idle = (): DragState => ({
+  mode: "none",
+  stem: null,
+  delta: 0,
+  sx: 0,
+  sy: 0,
+  t0: 0,
+  firedHold: false,
+  isolating: false,
+});
 
 type Zone =
   | { kind: "button" }
@@ -185,7 +215,8 @@ function zoneAt(p: THREE.Vector3): Zone | null {
 // covers the ground shadow and never the device itself. <ExtendedFrame> keeps
 // the camera framed on the original box, so the device doesn't move.
 const EXTEND = 0.35;
-const SCENE_HEIGHT = "clamp(340px, 45vw, 480px)";
+// Set in app.css, so the page layout can size the scene per breakpoint.
+const SCENE_HEIGHT = "var(--scene-height)";
 
 /** Eased fade between two points of the canvas height, as mask stops. A
  *  linear ramp has an abrupt start and end, and the eye reads both as faint
@@ -213,6 +244,7 @@ export default function DeviceCanvas({
   onTogglePlay,
   onVolumeStep,
   onTogglePower,
+  onHoldStem,
   onContextLost,
   onReady,
 }: Props) {
@@ -294,6 +326,7 @@ export default function DeviceCanvas({
           onTogglePlay={onTogglePlay}
           onVolumeStep={onVolumeStep}
           onTogglePower={onTogglePower}
+          onHoldStem={onHoldStem}
         />
 
         <GroundShadow />
@@ -671,6 +704,7 @@ function Device({
   onTogglePlay,
   onVolumeStep,
   onTogglePower,
+  onHoldStem,
 }: Props) {
   const { scene } = useGLTF(MODEL_URL);
   const reduceMotion = useReducedMotion();
@@ -678,18 +712,10 @@ function Device({
   const isOn = usePlayerStore((s) => s.isOn);
   const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
   const controls = useThree((s) => s.controls) as { enabled: boolean } | null;
-  const drag = useRef<{
-    mode: "none" | "button" | "groove" | "volume";
-    stem: StemName | null;
-    delta: number;
-    sx: number;
-    sy: number;
-    t0: number;
-    firedHold: boolean;
-  }>({ mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0, firedHold: false });
+  const drag = useRef<DragState>(idle());
 
-  // Power fires on a timer while the button is still held, so the device
-  // reacts under your finger instead of waiting for release.
+  // Power and isolate fire on a timer while still held, so the device reacts
+  // under your finger instead of waiting for release.
   const holdTimer = useRef<number | null>(null);
   const clearHold = () => {
     if (holdTimer.current !== null) {
@@ -698,12 +724,19 @@ function Device({
     }
   };
 
+  const releaseIsolate = () => {
+    if (drag.current.isolating && drag.current.stem) onHoldStem?.(drag.current.stem, false);
+  };
+  const releaseRef = useRef(releaseIsolate);
+  releaseRef.current = releaseIsolate;
+
   // Safety net: if the pointer is released off the model, the mesh never sees
   // pointerup and OrbitControls would stay disabled forever.
   useEffect(() => {
     const end = () => {
       clearHold();
-      drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0, firedHold: false };
+      releaseRef.current();
+      drag.current = idle();
       if (controls) controls.enabled = true;
       document.body.style.cursor = "";
     };
@@ -731,8 +764,20 @@ function Device({
       sy: e.clientY,
       t0: performance.now(),
       firedHold: false,
+      isolating: false,
     };
-    if (zone.kind === "groove") onStemVolume?.(zone.stem, zone.value);
+    if (zone.kind === "groove") {
+      onStemVolume?.(zone.stem, zone.value);
+      if (zone.value >= ISOLATE_FROM) {
+        const stem = zone.stem;
+        clearHold();
+        holdTimer.current = window.setTimeout(() => {
+          holdTimer.current = null;
+          drag.current.isolating = true;
+          onHoldStem?.(stem, true);
+        }, ISOLATE_HOLD_MS);
+      }
+    }
     if (zone.kind === "button") {
       clearHold();
       holdTimer.current = window.setTimeout(() => {
@@ -755,6 +800,8 @@ function Device({
     }
     if (drag.current.mode !== "groove") return;
     e.stopPropagation();
+    // Dragging along the groove sets its level; only a still hold isolates.
+    if (Math.hypot(e.clientX - drag.current.sx, e.clientY - drag.current.sy) >= 6) clearHold();
     const zone = zoneAt(e.point);
     // Only track the groove that was grabbed, so a wandering finger cannot
     // jump the value onto a neighbouring stem.
@@ -767,6 +814,7 @@ function Device({
     if (drag.current.mode === "none") return;
     e.stopPropagation();
     clearHold();
+    releaseIsolate();
     const moved = Math.hypot(e.clientX - drag.current.sx, e.clientY - drag.current.sy);
     // Treat as a press only if it was a tap, not the start of an orbit.
     if (moved < 6) {
@@ -776,7 +824,7 @@ function Device({
       }
       if (drag.current.mode === "volume") onVolumeStep?.(drag.current.delta);
     }
-    drag.current = { mode: "none", stem: null, delta: 0, sx: 0, sy: 0, t0: 0, firedHold: false };
+    drag.current = idle();
     if (controls) controls.enabled = true;
   };
 

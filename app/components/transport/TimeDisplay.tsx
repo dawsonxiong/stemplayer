@@ -6,13 +6,7 @@ export function TimeDisplay() {
   const duration = usePlayerStore((s) => s.duration);
 
   return (
-    <span
-      className="shrink-0 text-xs tabular-nums"
-      style={{
-        color: "var(--color-text-secondary)",
-        fontFamily: "var(--font-mono)",
-      }}
-    >
+    <span className="shrink-0 text-caption text-ink-muted tabular-nums">
       {formatTime(currentTime)} / {formatTime(duration)}
     </span>
   );

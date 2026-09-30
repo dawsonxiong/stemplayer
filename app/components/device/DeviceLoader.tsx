@@ -14,13 +14,12 @@ export function DeviceLoader() {
             className="led-boot h-2 w-2 rounded-full"
             style={{
               backgroundColor: colour,
-              boxShadow: `0 0 6px ${colour}`,
               animationDelay: `${i * STEP_MS}ms`,
             }}
           />
         ))}
       </div>
-      <span className="text-xs text-[var(--color-text-secondary)]">Loading</span>
+      <span className="text-caption text-ink-muted">Loading</span>
     </div>
   );
 }
