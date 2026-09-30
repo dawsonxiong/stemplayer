@@ -1,5 +1,6 @@
 import type { Route } from "./+types/api.webhook";
 import { secretMatches } from "~/lib/utils/secret";
+import { SHA256, stemCacheKey } from "~/lib/stem-cache";
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env;
@@ -8,12 +9,14 @@ export async function action({ request, context }: Route.ActionArgs) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { task_id, status, progress, stems, error } = (await request.json()) as {
+  const { task_id, status, progress, stems, error, input_sha256 } = (await request.json()) as {
     task_id: string;
     status: string;
     progress?: number;
     stems?: Record<string, string>;
     error?: string;
+    /** Hash of the audio the job downloaded, for recognising re-uploads. */
+    input_sha256?: string;
   };
 
   const raw = await env.JOBS.get(task_id);
@@ -41,6 +44,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     }),
     { expirationTtl: 86400 * 14 },
   );
+
+  // Expires with the job, since the stems it points at go at the same time.
+  if (status === "ready" && input_sha256 && SHA256.test(input_sha256)) {
+    await env.JOBS.put(stemCacheKey(input_sha256), task_id, { expirationTtl: 86400 * 14 });
+  }
 
   return Response.json({ ok: true });
 }

@@ -4,6 +4,9 @@ import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./const
  *  limit, the hourly cap) rather than for a developer. */
 export class UserFacingError extends Error {}
 
+/** The task, or its stems, no longer exist: expired, or never finished. */
+export class TrackNotFoundError extends Error {}
+
 /** Client errors carry a message meant for the user; server errors do not. */
 async function failure(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -11,7 +14,16 @@ async function failure(res: Response, fallback: string): Promise<Error> {
   return new Error(body.error || `${fallback} (${res.status})`);
 }
 
-export async function requestUploadUrl(file: File) {
+/** SHA-256 of the file's bytes, so a song split before is recognised. */
+export async function hashFile(file: File): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Either a fresh task to upload into, or the finished task for the same song. */
+export type UploadTicket = { taskId: string; uploadUrl: string } | { taskId: string; cached: true };
+
+export async function requestUploadUrl(file: File, hash: string | null) {
   const res = await fetch("/api/upload", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -19,10 +31,11 @@ export async function requestUploadUrl(file: File) {
       filename: file.name,
       contentType: file.type,
       fileSize: file.size,
+      hash,
     }),
   });
   if (!res.ok) throw await failure(res, "Upload request failed");
-  return res.json() as Promise<{ taskId: string; uploadUrl: string }>;
+  return res.json() as Promise<UploadTicket>;
 }
 
 export async function uploadFileToR2(
@@ -63,7 +76,6 @@ interface JobStatus {
   status: "uploaded" | "processing" | "ready" | "error";
   progress?: number;
   error?: string;
-  stems?: Record<string, string>;
 }
 
 export async function pollStatus(
@@ -95,9 +107,8 @@ export async function pollStatus(
 
 export async function fetchStemUrls(taskId: string) {
   const res = await fetch(`/api/stems/${taskId}`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch stem URLs");
-  }
+  if (res.status === 404) throw new TrackNotFoundError("Stems not found");
+  if (!res.ok) throw new Error(`Failed to fetch stem URLs (${res.status})`);
   return res.json() as Promise<{
     stems: Record<string, string>;
     title: string;

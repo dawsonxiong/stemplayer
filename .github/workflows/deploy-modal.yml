@@ -1,0 +1,33 @@
+# Redeploys the Demucs app on Modal whenever its code lands on main.
+# Branch pushes don't deploy: there is one Modal app, and it serves production.
+name: Deploy Modal
+
+on:
+  push:
+    branches: [main]
+    paths: ["modal/**"]
+  workflow_dispatch:
+
+# Only reads the repo; the deploy authenticates with the Modal token.
+permissions:
+  contents: read
+
+# A newer push supersedes a deploy that hasn't finished.
+concurrency:
+  group: deploy-modal
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Match the client version used locally.
+      - run: pip install modal==1.5.4
+      - run: modal deploy modal/app.py
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}

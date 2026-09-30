@@ -1,15 +1,19 @@
 import type { Route } from "./+types/api.upload";
-import { MAX_FILE_SIZE_MB, ACCEPTED_FORMATS } from "~/lib/constants";
+import { MAX_FILE_SIZE_MB, ACCEPTED_FORMATS, AUTO_DELETE_DAYS } from "~/lib/constants";
+import { SHA256, stemCacheKey } from "~/lib/stem-cache";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
 
 const EXTENSION = /\.(mp3|wav|flac|ogg|aac|m4a)$/i;
+// A hit this close to deletion would vanish almost at once, so split again.
+const CACHE_MAX_AGE_MS = (AUTO_DELETE_DAYS - 2) * 86_400_000;
 
 export async function action({ request, context }: Route.ActionArgs) {
   const env = context.cloudflare.env;
-  const { filename, contentType, fileSize } = (await request.json()) as {
+  const { filename, contentType, fileSize, hash } = (await request.json()) as {
     filename: string;
     contentType: string;
     fileSize: number;
+    hash?: string | null;
   };
 
   const ext = filename.match(EXTENSION)?.[0].toLowerCase();
@@ -19,6 +23,23 @@ export async function action({ request, context }: Route.ActionArgs) {
 
   if (!(fileSize > 0) || fileSize > MAX_FILE_SIZE_MB * 1024 * 1024) {
     return Response.json({ error: `File too large (${MAX_FILE_SIZE_MB}MB max)` }, { status: 400 });
+  }
+
+  // The same song split before: hand back its stems instead of another GPU run.
+  // Only the separation job writes this index, from the bytes it actually
+  // processed, so a client can't claim one song's hash for another's audio.
+  if (hash && SHA256.test(hash)) {
+    const cachedId = await env.JOBS.get(stemCacheKey(hash));
+    const cached = cachedId
+      ? await env.JOBS.get<{ status: string; createdAt: number }>(cachedId, "json")
+      : null;
+    if (
+      cachedId &&
+      cached?.status === "ready" &&
+      Date.now() - cached.createdAt < CACHE_MAX_AGE_MS
+    ) {
+      return Response.json({ taskId: cachedId, cached: true });
+    }
   }
 
   const taskId = crypto.randomUUID();
