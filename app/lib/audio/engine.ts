@@ -161,16 +161,6 @@ export class AudioEngine {
     return first?.audio.duration ?? 0;
   }
 
-  /** Spread between the fastest and slowest stem, in ms. Each HTMLAudioElement
-   *  runs its own clock, so this is the number that decides whether the
-   *  streaming engine is good enough or has to become AudioBufferSourceNodes. */
-  getDriftMs(): number {
-    const times: number[] = [];
-    for (const [, stem] of this.stems) times.push(stem.audio.currentTime);
-    if (times.length < 2) return 0;
-    return (Math.max(...times) - Math.min(...times)) * 1000;
-  }
-
   get isPlaying(): boolean {
     const first = this.stems.values().next().value;
     return first ? !first.audio.paused : false;

@@ -43,7 +43,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
 
   return (
     <div
-      className="flex w-full flex-col rounded-xl"
+      className="panel-in flex w-full flex-col rounded-xl"
       style={{
         backgroundColor: "var(--color-bg-secondary)",
         border: `1px solid ${effectsMode ? "var(--color-cyan-ink)" : "var(--color-border)"}`,

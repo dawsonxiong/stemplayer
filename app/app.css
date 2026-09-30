@@ -132,3 +132,39 @@ body::before {
     opacity: 0.85;
   }
 }
+
+/* The active step's LED breathes while that stage runs. */
+@keyframes step-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.step-pulse {
+  animation: step-pulse 1400ms ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-pulse {
+    animation: none;
+  }
+}
+
+/* Panels below the device swap as the song moves through upload, processing
+   and playback; each fades up into place instead of popping in. */
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.panel-in {
+  animation: panel-in 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel-in {
+    animation: none;
+  }
+}

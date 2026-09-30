@@ -71,7 +71,7 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
   if (status !== "idle" && status !== "error") return null;
 
   return (
-    <div className="w-full">
+    <div className="panel-in w-full">
       <input
         ref={inputRef}
         type="file"

@@ -6,12 +6,13 @@ import { MasterVolume } from "~/components/device/MasterVolume";
 import { TransportBar } from "~/components/transport/TransportBar";
 import { EffectsPanel } from "~/components/effects/EffectsPanel";
 import { UploadZone } from "~/components/upload/UploadZone";
-import { UploadProgress } from "~/components/upload/UploadProgress";
-import { DriftMeter } from "~/components/DriftMeter";
+import { ProcessingSteps } from "~/components/upload/ProcessingSteps";
 import { useAudioEngine } from "~/hooks/useAudioEngine";
 import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
-import { usePlayerStore } from "~/lib/store";
+import { usePlayerStore, type Stage } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
+import { formatTime } from "~/lib/utils/format";
+import { titleFromFilename } from "~/lib/utils/title";
 import {
   requestUploadUrl,
   uploadFileToR2,
@@ -21,11 +22,10 @@ import {
   UserFacingError,
 } from "~/lib/api";
 
-type Stage = "upload" | "separate" | "load";
-
 // Said in the product's voice: what happened, then what to do.
 const STAGE_ERRORS: Record<Stage, string> = {
   upload: "The upload didn’t finish. Check your connection, then drop the song again.",
+  start: "The GPU didn’t start. Drop the song again to retry.",
   separate: "Separating the stems failed. Drop the song again to retry.",
   load: "The stems are ready but didn’t load. Reload the page to try again.",
 };
@@ -58,8 +58,9 @@ export default function Home() {
   const audioEngine = useAudioEngine();
   const status = usePlayerStore((s) => s.status);
   const trackTitle = usePlayerStore((s) => s.trackTitle);
+  const trackDate = usePlayerStore((s) => s.trackDate);
+  const duration = usePlayerStore((s) => s.duration);
   const errorMessage = usePlayerStore((s) => s.errorMessage);
-  const separateProgress = usePlayerStore((s) => s.processingProgress);
   const isOn = usePlayerStore((s) => s.isOn);
 
   useKeyboardShortcuts(audioEngine);
@@ -68,10 +69,17 @@ export default function Home() {
     async (file: File) => {
       const store = usePlayerStore.getState();
       store.reset();
-      store.setTrackTitle(file.name.replace(/\.[^.]+$/, ""));
+      store.setTrackTitle(titleFromFilename(file.name));
+      store.setTrackDate(Date.now());
       let stage: Stage = "upload";
+      const enter = (next: Stage) => {
+        stage = next;
+        store.setStage(next);
+        store.setProcessingProgress(0);
+      };
 
       try {
+        enter("upload");
         store.setStatus("uploading");
         const { taskId, uploadUrl } = await requestUploadUrl(file);
         store.setTaskId(taskId);
@@ -80,22 +88,26 @@ export default function Home() {
           store.setProcessingProgress(progress);
         });
 
-        stage = "separate";
+        enter("start");
         store.setStatus("processing");
-        store.setProcessingProgress(0);
         await triggerSeparation(taskId);
 
+        // The job's first progress report means the GPU is up and working.
         await pollStatus(taskId, (progress) => {
+          if (progress > 0 && usePlayerStore.getState().stage === "start") enter("separate");
           store.setProcessingProgress(progress);
         });
 
         // Set before loading, so a reload retries the load and not the GPU run.
-        stage = "load";
+        enter("load");
         setTrackParam(taskId);
         const { stems } = await fetchStemUrls(taskId);
         await audioEngine?.loadStems(stems);
+        // Known once the stems load; otherwise it only updates during playback.
+        store.setDuration(audioEngine?.duration ?? 0);
 
         store.setStatus("ready");
+        store.setStage(null);
         // Autoplay only if the device was left on while the track separated.
         if (usePlayerStore.getState().isOn) {
           audioEngine?.play();
@@ -116,20 +128,29 @@ export default function Home() {
     const store = usePlayerStore.getState();
     if (store.status !== "idle") return;
     store.setTaskId(taskId);
+    store.setStage("load");
     store.setStatus("processing");
 
     fetchStemUrls(taskId)
-      .then(async ({ stems, title }) => {
+      .then(async ({ stems, title, createdAt }) => {
         await audioEngine.loadStems(stems);
-        store.setTrackTitle(title.replace(/\.[^.]+$/, ""));
+        store.setDuration(audioEngine.duration);
+        store.setTrackTitle(titleFromFilename(title));
+        store.setTrackDate(createdAt);
         // No autoplay: the browser wants a gesture before audio starts.
         store.setStatus("ready");
+        store.setStage(null);
       })
       .catch(() => {
         setTrackParam(null);
         store.reset();
       });
   }, [audioEngine]);
+
+  useEffect(() => {
+    document.title =
+      trackTitle && status === "ready" ? `${trackTitle} – Stem Player` : "Stem Player";
+  }, [trackTitle, status]);
 
   const handleNewTrack = useCallback(() => {
     audioEngine?.dispose();
@@ -144,20 +165,28 @@ export default function Home() {
   const busy = status === "uploading" || status === "processing";
 
   return (
-    <main className="relative z-10 flex min-h-screen flex-col items-center px-4 py-8 sm:py-12">
-      <header className="flex w-full max-w-md flex-col items-center gap-2 text-center">
-        <h1 className="max-w-full truncate text-xl tracking-[0.16em] text-[var(--color-text-primary)] uppercase sm:text-2xl">
-          {trackTitle && (busy || status === "ready") ? trackTitle : "Stem Player"}
+    <main className="relative z-10 flex min-h-screen flex-col items-center px-4 pt-14 pb-8 sm:pt-20 sm:pb-12">
+      <header className="flex w-full max-w-md flex-col items-center gap-3 text-center">
+        <h1 className="text-xl tracking-[0.16em] text-[var(--color-text-primary)] uppercase sm:text-2xl">
+          Stem Player
         </h1>
-        {busy ? (
-          <p aria-live="polite" className="text-sm text-[var(--color-text-secondary)] tabular-nums">
-            {status === "uploading"
-              ? "Uploading"
-              : `Separating stems${separateProgress > 0 ? `, ${Math.round(separateProgress)}%` : ""}`}
-          </p>
+        {trackTitle && status !== "idle" ? (
+          <div className="flex max-w-full flex-col items-center gap-1">
+            <p className="line-clamp-2 text-base text-balance text-[var(--color-text-primary)]">
+              {trackTitle}
+            </p>
+            {/* While it's processing, the steps below say what's happening. */}
+            {status === "ready" && (
+              <p className="text-xs text-[var(--color-text-secondary)] tabular-nums">
+                {trackDetails(duration, trackDate)}
+              </p>
+            )}
+          </div>
+        ) : busy ? (
+          <p className="text-sm text-[var(--color-text-secondary)]">Loading your song</p>
         ) : status !== "ready" ? (
           <p className="text-sm text-balance text-[var(--color-text-secondary)]">
-            Split a song into vocals, drums, bass and the rest, then mix it live.
+            Split a song into its stems, just like the real thing
           </p>
         ) : null}
       </header>
@@ -184,7 +213,13 @@ export default function Home() {
 
         <TransportBar audioEngine={audioEngine} />
         <EffectsPanel audioEngine={audioEngine} />
-        <UploadProgress />
+        <ProcessingSteps />
+
+        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 pb-2">
+          <ColorPicker />
+          {/* Nothing to turn up until a song has been uploaded. */}
+          {status !== "idle" && <MasterVolume audioEngine={audioEngine} />}
+        </div>
 
         {status === "error" && errorMessage && (
           <p
@@ -196,12 +231,6 @@ export default function Home() {
         )}
 
         <UploadZone onFileSelected={handleFileSelected} />
-
-        <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 pt-2">
-          <ColorPicker />
-          {/* Nothing to turn up until a song has been uploaded. */}
-          {status !== "idle" && <MasterVolume audioEngine={audioEngine} />}
-        </div>
       </div>
 
       {status === "ready" && (
@@ -231,12 +260,25 @@ export default function Home() {
               </li>
             ))}
           </ul>
-
-          {import.meta.env.DEV && <DriftMeter audioEngine={audioEngine} />}
         </footer>
       )}
     </main>
   );
+}
+
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+/** "2:04, added 28 Sep 2026". Either part is left out when it isn't known. */
+function trackDetails(duration: number, date: number | null) {
+  const parts: string[] = [];
+  if (duration > 0) parts.push(formatTime(duration));
+  if (date) parts.push(`added ${DATE_FORMAT.format(date)}`);
+  const text = parts.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 const SHORTCUTS: [string, string][] = [

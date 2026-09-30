@@ -12,6 +12,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   const data = JSON.parse(raw) as {
     status: string;
     filename: string;
+    createdAt?: number;
     stems?: Record<string, string>;
   };
 
@@ -29,5 +30,6 @@ export async function loader({ params, context }: Route.LoaderArgs) {
   return Response.json({
     stems: Object.fromEntries(entries),
     title: data.filename,
+    createdAt: data.createdAt ?? null,
   });
 }

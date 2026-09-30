@@ -101,5 +101,6 @@ export async function fetchStemUrls(taskId: string) {
   return res.json() as Promise<{
     stems: Record<string, string>;
     title: string;
+    createdAt: number | null;
   }>;
 }

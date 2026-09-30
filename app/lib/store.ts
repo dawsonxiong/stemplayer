@@ -1,12 +1,18 @@
 import { create } from "zustand";
 import type { DeviceColor, StemName } from "./constants";
 
+/** Where a song is in the pipeline. Kept after a failure to show which broke. */
+export type Stage = "upload" | "start" | "separate" | "load";
+
 interface PlayerState {
   // Track state
   taskId: string | null;
   trackTitle: string;
+  /** When the song was uploaded, for the header. */
+  trackDate: number | null;
   status: "idle" | "uploading" | "processing" | "ready" | "error";
   processingProgress: number;
+  stage: Stage | null;
   errorMessage: string | null;
 
   // Playback
@@ -45,7 +51,9 @@ interface PlayerState {
   setDuration: (duration: number) => void;
   setTaskId: (taskId: string) => void;
   setTrackTitle: (title: string) => void;
+  setTrackDate: (date: number | null) => void;
   setProcessingProgress: (progress: number) => void;
+  setStage: (stage: Stage | null) => void;
   setErrorMessage: (message: string | null) => void;
   toggleEffectsMode: () => void;
   setEcho: (params: Partial<PlayerState["echo"]>) => void;
@@ -60,8 +68,10 @@ interface PlayerState {
 const initialState = {
   taskId: null,
   trackTitle: "",
+  trackDate: null,
   status: "idle" as const,
   processingProgress: 0,
+  stage: null,
   errorMessage: null,
   isPlaying: false,
   currentTime: 0,
@@ -87,7 +97,9 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   setDuration: (duration) => set({ duration }),
   setTaskId: (taskId) => set({ taskId }),
   setTrackTitle: (trackTitle) => set({ trackTitle }),
+  setTrackDate: (trackDate) => set({ trackDate }),
   setProcessingProgress: (processingProgress) => set({ processingProgress }),
+  setStage: (stage) => set({ stage }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
   toggleEffectsMode: () => set((s) => ({ effectsMode: !s.effectsMode })),
   setEcho: (params) => set((s) => ({ echo: { ...s.echo, ...params } })),
