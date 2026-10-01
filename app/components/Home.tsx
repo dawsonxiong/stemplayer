@@ -189,6 +189,8 @@ export function Home() {
           store.setPlaying(true);
         }
       } catch (err) {
+        // The message on screen is per stage; this says what actually broke.
+        console.error(`Failed at the ${stage} step`, err);
         store.setStatus("error");
         store.setErrorMessage(err instanceof UserFacingError ? err.message : stageError(stage));
         // A song that's too long or private would only fail the same way.
@@ -226,6 +228,7 @@ export function Home() {
         // No autoplay: the browser wants a gesture before audio starts.
         store.setStatus("ready");
       } catch (err) {
+        console.error("Failed to open the song", err);
         // Only a missing task is gone for good; a dropped connection isn't.
         const expired = err instanceof TrackNotFoundError;
         if (expired) forgetTrack(taskId);

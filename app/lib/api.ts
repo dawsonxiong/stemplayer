@@ -135,7 +135,13 @@ export async function pollStatus(
 }
 
 export async function fetchStemUrls(taskId: string) {
-  const res = await fetch(`/api/stems/${taskId}`);
+  let res = await fetch(`/api/stems/${taskId}`);
+  // 409: this read is behind the status poll that just saw "ready". KV
+  // catches up within a minute or so.
+  for (let wait = POLL_INTERVAL_MS; res.status === 409 && wait <= 16_000; wait *= 2) {
+    await new Promise((r) => setTimeout(r, wait));
+    res = await fetch(`/api/stems/${taskId}`);
+  }
   if (res.status === 404) throw new TrackNotFoundError("Stems not found");
   if (!res.ok) throw new Error(`Failed to fetch stem URLs (${res.status})`);
   return res.json() as Promise<{

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { stemsExist } from "~/lib/stem-cache";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
 import { titleFromFilename } from "~/lib/utils/title";
 
@@ -21,8 +22,16 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     stems?: Record<string, string>;
   };
 
+  if (data.status === "error") {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+  // KV is eventually consistent, so this read can lag the status poll that
+  // just saw "ready". 409 tells the client to ask again, not to give up.
   if (data.status !== "ready" || !data.stems) {
-    return Response.json({ error: "Stems not ready" }, { status: 404 });
+    return Response.json({ error: "Stems not ready" }, { status: 409 });
+  }
+  if (!(await stemsExist(env, data.stems))) {
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
 
   const entries = await Promise.all(
