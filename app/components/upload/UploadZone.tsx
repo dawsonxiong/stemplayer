@@ -1,17 +1,35 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { usePlayerStore } from "~/lib/store";
 import { MAX_FILE_SIZE_MB, MAX_DURATION_MINUTES, ACCEPTED_FORMATS } from "~/lib/constants";
+import { parseYouTubeId } from "~/lib/youtube";
+
+const NOT_A_VIDEO = "That isn’t a link to a YouTube video. Copy the link from the video’s page.";
 
 interface UploadZoneProps {
   onFileSelected: (file: File) => void;
+  onLinkSubmitted: (url: string) => void;
 }
 
-export function UploadZone({ onFileSelected }: UploadZoneProps) {
+export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps) {
   const status = usePlayerStore((s) => s.status);
   const [isDragOver, setIsDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [link, setLink] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const errorId = useId();
+
+  const submitLink = useCallback(
+    (url: string) => {
+      setError(null);
+      if (!parseYouTubeId(url)) {
+        setError(NOT_A_VIDEO);
+        return;
+      }
+      setLink("");
+      onLinkSubmitted(url);
+    },
+    [onLinkSubmitted],
+  );
 
   const validateAndSubmit = useCallback(
     async (file: File) => {
@@ -104,6 +122,22 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
     };
   }, [accepting, validateAndSubmit]);
 
+  // Like a dropped file, a YouTube link pasted anywhere on the page counts,
+  // not only one pasted into the field. Pastes into other fields are theirs.
+  useEffect(() => {
+    if (!accepting) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable]")) return;
+      const text = e.clipboardData?.getData("text/plain").trim() ?? "";
+      if (!parseYouTubeId(text)) return;
+      e.preventDefault();
+      submitLink(text);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [accepting, submitLink]);
+
   if (!accepting) return null;
 
   return (
@@ -144,6 +178,34 @@ export function UploadZone({ onFileSelected }: UploadZoneProps) {
           {isDragOver ? "anywhere on the page" : "or drop one anywhere"}
         </span>
       </div>
+
+      <form
+        className="link-field flex w-full max-w-sm items-center rounded-full border border-line pl-4 transition-colors focus-within:border-line-strong"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (link.trim()) submitLink(link.trim());
+        }}
+      >
+        <input
+          type="text"
+          inputMode="url"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          placeholder="or paste a YouTube link"
+          aria-label="YouTube link"
+          aria-describedby={error ? errorId : undefined}
+          className="min-w-0 flex-1 bg-transparent py-2.5 text-body text-ink placeholder:text-ink-muted"
+        />
+        <button
+          type="submit"
+          className="shrink-0 cursor-pointer rounded-full px-4 py-2.5 text-body text-ink transition-colors hover:bg-raised"
+        >
+          Split
+        </button>
+      </form>
 
       {error && (
         <p

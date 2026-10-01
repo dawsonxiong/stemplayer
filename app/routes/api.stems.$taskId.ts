@@ -1,5 +1,6 @@
 import type { Route } from "./+types/api.stems.$taskId";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
+import { titleFromFilename } from "~/lib/utils/title";
 
 export async function loader({ params, context }: Route.LoaderArgs) {
   const env = context.cloudflare.env;
@@ -11,7 +12,9 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
   const data = JSON.parse(raw) as {
     status: string;
-    filename: string;
+    /** A YouTube video's title. Uploads only have their filename. */
+    title?: string;
+    filename?: string;
     createdAt?: number;
     stems?: Record<string, string>;
   };
@@ -29,7 +32,7 @@ export async function loader({ params, context }: Route.LoaderArgs) {
 
   return Response.json({
     stems: Object.fromEntries(entries),
-    title: data.filename,
+    title: data.title ?? (data.filename ? titleFromFilename(data.filename) : "Untitled"),
     createdAt: data.createdAt ?? null,
   });
 }

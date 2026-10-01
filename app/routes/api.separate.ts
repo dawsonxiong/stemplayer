@@ -12,10 +12,11 @@ export async function action({ request, context }: Route.ActionArgs) {
     return Response.json({ error: "Task not found" }, { status: 404 });
   }
 
+  // An upload has an R2 key; a YouTube link has a video ID instead.
   const jobData = JSON.parse(raw) as {
     status: string;
-    filename: string;
-    r2Key: string;
+    r2Key?: string;
+    youtubeId?: string;
     createdAt: number;
   };
 
@@ -58,7 +59,7 @@ export async function action({ request, context }: Route.ActionArgs) {
     },
     body: JSON.stringify({
       task_id: taskId,
-      input_r2_key: jobData.r2Key,
+      ...(jobData.youtubeId ? { youtube_id: jobData.youtubeId } : { input_r2_key: jobData.r2Key }),
       webhook_url: `${origin}/api/webhook`,
     }),
   });

@@ -6,6 +6,8 @@ Read `PLAN.md` for the full build plan and component specs.
 
 Data flow: upload → R2 (presigned PUT) → `api.separate` → Modal GPU (Demucs) → webhook → KV job status → client polls `api.status` → `api.stems` serves stem URLs → Web Audio API.
 
+A YouTube link skips the upload: `api.link` checks the link (oEmbed gives the title) → `api.separate` → the Modal job downloads the audio with yt-dlp, then carries on as above. Repeat videos reuse their stems via a `yt:` index in KV.
+
 ## Commands
 
 ```sh

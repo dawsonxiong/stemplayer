@@ -162,6 +162,16 @@ body::before {
   outline-offset: 2px;
 }
 
+/* The YouTube link field: the ring goes round the whole pill rather than the
+   bare input inside it. */
+.link-field:has(input:focus-visible) {
+  outline: 2px solid var(--color-magenta-ink);
+  outline-offset: 2px;
+}
+.link-field input:focus-visible {
+  outline: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

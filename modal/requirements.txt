@@ -2,4 +2,6 @@ demucs==4.0.1
 torch==2.3.1
 torchaudio==2.3.1
 boto3==1.34.0
-requests==2.31.0
+requests==2.34.2
+yt-dlp[default]==2026.8.19
+deno==2.9.7

@@ -38,6 +38,22 @@ export async function requestUploadUrl(file: File, hash: string | null) {
   return res.json() as Promise<UploadTicket>;
 }
 
+/** A task for a YouTube video, or the finished task for the same video. Its
+ *  title is null when YouTube wouldn't say; the job fills it in later. */
+export type LinkTicket =
+  | { taskId: string; title: string | null }
+  | { taskId: string; cached: true };
+
+export async function requestLinkTask(url: string) {
+  const res = await fetch("/api/link", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) throw await failure(res, "Link request failed");
+  return res.json() as Promise<LinkTicket>;
+}
+
 export async function uploadFileToR2(
   uploadUrl: string,
   file: File,
@@ -76,6 +92,7 @@ interface JobStatus {
   status: "uploaded" | "processing" | "ready" | "error";
   progress?: number;
   error?: string;
+  userError?: string;
 }
 
 export async function pollStatus(
@@ -97,6 +114,7 @@ export async function pollStatus(
 
     if (data.status === "ready") return data;
     if (data.status === "error") {
+      if (data.userError) throw new UserFacingError(data.userError);
       throw new Error(data.error || "Separation failed");
     }
     if (typeof data.progress === "number") onProgress?.(data.progress);

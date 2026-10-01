@@ -1,8 +1,13 @@
 import { create } from "zustand";
 import type { DeviceColor, EffectName, StemName } from "./constants";
 
-/** Where a song is in the pipeline. Kept after a failure to show which broke. */
-export type Stage = "upload" | "start" | "separate" | "load";
+/** Where a song is in the pipeline. Kept after a failure to show which broke.
+ *  An upload goes upload → start → separate → load; a YouTube link has nothing
+ *  to upload, and the GPU job downloads it instead: start → fetch → separate → load. */
+export type Stage = "upload" | "start" | "fetch" | "separate" | "load";
+
+/** Where the song came from: a file, or a YouTube link. */
+export type Source = "file" | "link";
 
 interface PlayerState {
   // Track state
@@ -13,6 +18,7 @@ interface PlayerState {
   status: "idle" | "uploading" | "processing" | "ready" | "error";
   processingProgress: number;
   stage: Stage | null;
+  source: Source | null;
   errorMessage: string | null;
 
   // Playback
@@ -66,6 +72,7 @@ interface PlayerState {
   setTrackDate: (date: number | null) => void;
   setProcessingProgress: (progress: number) => void;
   setStage: (stage: Stage | null) => void;
+  setSource: (source: Source | null) => void;
   setErrorMessage: (message: string | null) => void;
   toggleEffectsMode: () => void;
   setEcho: (params: Partial<PlayerState["echo"]>) => void;
@@ -84,6 +91,7 @@ const initialState = {
   status: "idle" as const,
   processingProgress: 0,
   stage: null,
+  source: null as Source | null,
   errorMessage: null,
   isPlaying: false,
   currentTime: 0,
@@ -121,6 +129,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   setTrackDate: (trackDate) => set({ trackDate }),
   setProcessingProgress: (processingProgress) => set({ processingProgress }),
   setStage: (stage) => set({ stage }),
+  setSource: (source) => set({ source }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
   toggleEffectsMode: () => set((s) => ({ effectsMode: !s.effectsMode })),
   setEcho: (params) => set((s) => ({ echo: { ...s.echo, ...params } })),

@@ -1,4 +1,6 @@
-/** Recognising a song that was split before, by the SHA-256 of its bytes. */
+/** Recognising a song that was split before, by the SHA-256 of its bytes or
+ *  by the YouTube video it came from. */
+import { AUTO_DELETE_DAYS } from "./constants";
 
 export const SHA256 = /^[0-9a-f]{64}$/;
 
@@ -6,4 +8,16 @@ export const SHA256 = /^[0-9a-f]{64}$/;
 // model or output format, so old results stop being served for new uploads.
 const OUTPUT_VERSION = "htdemucs-mp3-192";
 
+// A hit this close to deletion would vanish almost at once, so split again.
+const CACHE_MAX_AGE_MS = (AUTO_DELETE_DAYS - 2) * 86_400_000;
+
 export const stemCacheKey = (hash: string) => `hash:${OUTPUT_VERSION}:${hash}`;
+export const youTubeCacheKey = (videoId: string) => `yt:${OUTPUT_VERSION}:${videoId}`;
+
+/** The finished task an index key points at, if its stems are still fresh. */
+export async function findCachedTask(env: Env, indexKey: string): Promise<string | null> {
+  const taskId = await env.JOBS.get(indexKey);
+  if (!taskId) return null;
+  const job = await env.JOBS.get<{ status: string; createdAt: number }>(taskId, "json");
+  return job?.status === "ready" && Date.now() - job.createdAt < CACHE_MAX_AGE_MS ? taskId : null;
+}

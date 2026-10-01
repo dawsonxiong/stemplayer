@@ -13,13 +13,14 @@ import { ProcessingSteps } from "~/components/upload/ProcessingSteps";
 import { HistoryList } from "~/components/upload/HistoryList";
 import { useAudioEngine } from "~/hooks/useAudioEngine";
 import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
-import { usePlayerStore, type Stage } from "~/lib/store";
+import { usePlayerStore, type Source, type Stage } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
 import { trackDetails } from "~/lib/utils/format";
 import { titleFromFilename } from "~/lib/utils/title";
 import { findTrack, forgetTrack, rememberTrack } from "~/lib/history";
 import {
   hashFile,
+  requestLinkTask,
   requestUploadUrl,
   uploadFileToR2,
   triggerSeparation,
@@ -33,12 +34,25 @@ import {
 const EXPIRED_ERROR = "That song has expired. Drop it again to split it.";
 const OPEN_ERROR = "That song didn’t load. Check your connection and try again.";
 
-const STAGE_ERRORS: Record<Stage, string> = {
-  upload: "The upload didn’t finish. Check your connection, then drop the song again.",
-  start: "The GPU didn’t start. Drop the song again to retry.",
-  separate: "Separating the stems failed. Drop the song again to retry.",
-  load: "The stems are ready but didn’t load. Reload the page to try again.",
+const RETRY: Record<Source, string> = {
+  file: "Drop the song again",
+  link: "Paste the link again",
 };
+
+function stageError(stage: Stage, source: Source): string {
+  switch (stage) {
+    case "upload":
+      return "The upload didn’t finish. Check your connection, then drop the song again.";
+    case "start":
+      return `The GPU didn’t start. ${RETRY[source]} to retry.`;
+    case "fetch":
+      return `The video didn’t download. ${RETRY[source]} to retry.`;
+    case "separate":
+      return `Separating the stems failed. ${RETRY[source]} to retry.`;
+    case "load":
+      return "The stems are ready but didn’t load. Reload the page to try again.";
+  }
+}
 
 /** Adds the loaded song to this browser's history. */
 function remember(taskId: string) {
@@ -82,51 +96,78 @@ export default function Home() {
 
   useKeyboardShortcuts(audioEngine);
 
-  const handleFileSelected = useCallback(
-    async (file: File) => {
+  /** Splits a song from a file or a YouTube link, then loads its stems. */
+  const split = useCallback(
+    async (input: { file: File } | { url: string }) => {
+      const source: Source = "file" in input ? "file" : "link";
       const store = usePlayerStore.getState();
       store.reset();
-      store.setTrackTitle(titleFromFilename(file.name));
+      store.setSource(source);
+      // A link's title comes from YouTube; until then, the steps stand alone.
+      if ("file" in input) store.setTrackTitle(titleFromFilename(input.file.name));
       store.setTrackDate(Date.now());
-      let stage: Stage = "upload";
+      let stage: Stage = source === "file" ? "upload" : "start";
       const enter = (next: Stage) => {
         stage = next;
         store.setStage(next);
         store.setProcessingProgress(0);
       };
 
-      try {
-        enter("upload");
-        store.setStatus("uploading");
-        // A failed hash only costs the cache hit, never the upload.
-        const hash = await hashFile(file).catch(() => null);
-        const ticket = await requestUploadUrl(file, hash);
-        const { taskId } = ticket;
-        store.setTaskId(taskId);
+      /** Starts the GPU job and waits for it, lighting each step as it goes. */
+      const separate = async (taskId: string) => {
+        enter("start");
+        store.setStatus("processing");
+        await triggerSeparation(taskId);
 
-        // Split before: its stems are already there, so skip straight to loading.
-        if ("uploadUrl" in ticket) {
-          await uploadFileToR2(ticket.uploadUrl, file, (progress) => {
-            store.setProcessingProgress(progress);
-          });
-
-          enter("start");
-          store.setStatus("processing");
-          await triggerSeparation(taskId);
-
+        await pollStatus(taskId, (progress) => {
           // The job's first progress report means the GPU is up and working.
-          await pollStatus(taskId, (progress) => {
-            if (progress > 0 && usePlayerStore.getState().stage === "start") enter("separate");
-            store.setProcessingProgress(progress);
-          });
+          // For a link it then downloads the video, done when it reports 15.
+          const now = usePlayerStore.getState().stage;
+          if (progress > 0 && now === "start") enter(source === "link" ? "fetch" : "separate");
+          if (progress >= 15 && usePlayerStore.getState().stage === "fetch") enter("separate");
+          store.setProcessingProgress(progress);
+        });
+      };
+
+      try {
+        enter(stage);
+        let taskId: string;
+
+        if ("file" in input) {
+          store.setStatus("uploading");
+          // A failed hash only costs the cache hit, never the upload.
+          const hash = await hashFile(input.file).catch(() => null);
+          const ticket = await requestUploadUrl(input.file, hash);
+          taskId = ticket.taskId;
+          store.setTaskId(taskId);
+
+          // Split before: its stems are already there, so skip straight to loading.
+          if ("uploadUrl" in ticket) {
+            await uploadFileToR2(ticket.uploadUrl, input.file, (progress) => {
+              store.setProcessingProgress(progress);
+            });
+            await separate(taskId);
+          } else {
+            store.setStatus("processing");
+          }
         } else {
           store.setStatus("processing");
+          const ticket = await requestLinkTask(input.url);
+          taskId = ticket.taskId;
+          store.setTaskId(taskId);
+          if (!("cached" in ticket)) {
+            if (ticket.title) store.setTrackTitle(ticket.title);
+            await separate(taskId);
+          }
         }
 
         // Set before loading, so a reload retries the load and not the GPU run.
         enter("load");
         setTrackParam(taskId);
-        const { stems, createdAt } = await fetchStemUrls(taskId);
+        const { stems, title, createdAt } = await fetchStemUrls(taskId);
+        // A file keeps the name it was dropped with, even on a cache hit from
+        // someone else's upload. A video's title is the same for everyone.
+        if (source === "link") store.setTrackTitle(title);
         await audioEngine?.loadStems(stems);
         // Known once the stems load; otherwise it only updates during playback.
         store.setDuration(audioEngine?.duration ?? 0);
@@ -143,11 +184,16 @@ export default function Home() {
         }
       } catch (err) {
         store.setStatus("error");
-        store.setErrorMessage(err instanceof UserFacingError ? err.message : STAGE_ERRORS[stage]);
+        store.setErrorMessage(
+          err instanceof UserFacingError ? err.message : stageError(stage, source),
+        );
       }
     },
     [audioEngine],
   );
+
+  const handleFileSelected = useCallback((file: File) => void split({ file }), [split]);
+  const handleLinkSubmitted = useCallback((url: string) => void split({ url }), [split]);
 
   /** Loads a song that was split before, from a link, a reload or history. */
   const openTrack = useCallback(
@@ -166,7 +212,7 @@ export default function Home() {
         const { stems, title, createdAt } = await fetchStemUrls(taskId);
         await audioEngine.loadStems(stems);
         store.setDuration(audioEngine.duration);
-        store.setTrackTitle(knownTitle ?? titleFromFilename(title));
+        store.setTrackTitle(knownTitle ?? title);
         store.setTrackDate(createdAt);
         remember(taskId);
         // No autoplay: the browser wants a gesture before audio starts.
@@ -294,7 +340,7 @@ export default function Home() {
             </p>
           )}
 
-          <UploadZone onFileSelected={handleFileSelected} />
+          <UploadZone onFileSelected={handleFileSelected} onLinkSubmitted={handleLinkSubmitted} />
           {(status === "idle" || status === "error") && (
             <HistoryList onOpen={(entry) => void openTrack(entry.taskId, entry.title)} />
           )}
