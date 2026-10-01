@@ -1,4 +1,4 @@
-import type { Route } from "./+types/api.link";
+import { env } from "cloudflare:workers";
 import { findCachedTask, youTubeCacheKey } from "~/lib/stem-cache";
 import { parseYouTubeId, youTubeWatchUrl } from "~/lib/youtube";
 
@@ -7,8 +7,7 @@ const NO_SUCH_VIDEO = "That video doesn’t exist or was taken down. Check the l
 
 /** Starts a task for a YouTube video. Nothing is uploaded: the separation job
  *  downloads the audio itself, so the client goes straight to /api/separate. */
-export async function action({ request, context }: Route.ActionArgs) {
-  const env = context.cloudflare.env;
+export async function POST(request: Request) {
   const { url } = (await request.json()) as { url?: string };
 
   const videoId = typeof url === "string" ? parseYouTubeId(url) : null;

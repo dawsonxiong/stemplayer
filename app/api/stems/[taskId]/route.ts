@@ -1,10 +1,10 @@
-import type { Route } from "./+types/api.stems.$taskId";
+import { env } from "cloudflare:workers";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
 import { titleFromFilename } from "~/lib/utils/title";
 
-export async function loader({ params, context }: Route.LoaderArgs) {
-  const env = context.cloudflare.env;
-  const raw = await env.JOBS.get(params.taskId);
+export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[taskId]">) {
+  const { taskId } = await ctx.params;
+  const raw = await env.JOBS.get(taskId);
 
   if (!raw) {
     return Response.json({ error: "Not found" }, { status: 404 });

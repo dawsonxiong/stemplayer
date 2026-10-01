@@ -3,7 +3,10 @@
   "ignorePatterns": [
     "node_modules",
     "build",
-    ".react-router",
+    "dist",
+    ".next",
+    ".vinext",
+    "next-env.d.ts",
     ".wrangler",
     "public",
     "modal",

@@ -1,12 +1,13 @@
-import type { Route } from "./+types/api.status.$taskId";
+import { env } from "cloudflare:workers";
 
-export async function loader({ params, context }: Route.LoaderArgs) {
-  const data = await context.cloudflare.env.JOBS.get<{
+export async function GET(_request: Request, ctx: RouteContext<"/api/status/[taskId]">) {
+  const { taskId } = await ctx.params;
+  const data = await env.JOBS.get<{
     status: string;
     progress?: number;
     error?: string;
     userError?: string;
-  }>(params.taskId, "json");
+  }>(taskId, "json");
   if (!data) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

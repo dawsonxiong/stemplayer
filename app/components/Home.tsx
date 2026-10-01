@@ -1,5 +1,7 @@
-import type { Route } from "./+types/home";
+"use client";
+
 import { useCallback, useEffect } from "react";
+import { preload } from "react-dom";
 import { Device } from "~/components/device/Device";
 import { ColorPicker } from "~/components/device/ColorPicker";
 import { DeviceIcon } from "~/components/device/DeviceIcon";
@@ -68,23 +70,11 @@ function setTrackParam(taskId: string | null) {
   window.history.replaceState(null, "", url);
 }
 
-// Start the model download with the page instead of after three.js has
-// loaded and parsed. Same-origin fetch, so it matches useGLTF's request.
-export const links: Route.LinksFunction = () => [
-  { rel: "preload", href: MODEL_URL, as: "fetch", crossOrigin: "anonymous" },
-];
+export function Home() {
+  // Start the model download with the page instead of after three.js has
+  // loaded and parsed. Same-origin fetch, so it matches useGLTF's request.
+  preload(MODEL_URL, { as: "fetch", crossOrigin: "anonymous" });
 
-export const meta: Route.MetaFunction = () => {
-  return [
-    { title: "Stem Player" },
-    {
-      name: "description",
-      content: "Upload any song, separate it into stems, and mix it live in your browser.",
-    },
-  ];
-};
-
-export default function Home() {
   const audioEngine = useAudioEngine();
   const status = usePlayerStore((s) => s.status);
   const trackTitle = usePlayerStore((s) => s.trackTitle);

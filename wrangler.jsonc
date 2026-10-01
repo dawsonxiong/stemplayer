@@ -4,7 +4,9 @@
   "account_id": "28cf8412596e686a740a117e47df06c4",
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
-  "main": "./workers/app.ts",
+  // vinext's built-in Worker entry serves the App Router.
+  "main": "vinext/server/fetch-handler",
+  "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" },
 
   // R2 bucket for audio files (uploads + stems)
   "r2_buckets": [

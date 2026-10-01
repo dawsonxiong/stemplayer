@@ -84,7 +84,7 @@ if (url) {
   );
 }
 
-const app = spawn("react-router", ["dev", "--port", String(PORT), "--strictPort"], {
+const app = spawn("vite", ["dev", "--port", String(PORT), "--strictPort"], {
   stdio: "inherit",
   env: { ...process.env, ...secrets, ...(url ? { VITE_WEBHOOK_ORIGIN: url } : {}) },
 });

@@ -1,10 +1,9 @@
-import type { Route } from "./+types/api.separate";
+import { env } from "cloudflare:workers";
 import { SEPARATIONS_PER_HOUR } from "~/lib/constants";
 
 const TTL = { expirationTtl: 86400 * 14 };
 
-export async function action({ request, context }: Route.ActionArgs) {
-  const env = context.cloudflare.env;
+export async function POST(request: Request) {
   const { taskId } = (await request.json()) as { taskId: string };
 
   const raw = await env.JOBS.get(taskId);

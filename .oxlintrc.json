@@ -16,16 +16,13 @@
     "react/react-in-jsx-scope": "off",
     "no-underscore-dangle": ["warn", { "allow": ["_effects", "_recorder", "_masterVolume"] }]
   },
-  "overrides": [
-    {
-      "files": ["workers/**"],
-      "rules": { "no-console": "off" }
-    }
-  ],
   "ignorePatterns": [
     "node_modules",
     "build",
-    ".react-router",
+    "dist",
+    ".next",
+    ".vinext",
+    "next-env.d.ts",
     ".wrangler",
     "public",
     "modal",

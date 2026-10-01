@@ -4,20 +4,20 @@
     {
       "name": "dev",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "dev"
-      ],
+      "runtimeArgs": ["dev"],
       "port": 5173
     },
     {
       "name": "ui",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": [
-        "dev:ui",
-        "--port",
-        "5174"
-      ],
+      "runtimeArgs": ["dev:ui", "--port", "5174"],
       "port": 5174
+    },
+    {
+      "name": "preview",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["preview", "--port", "4173", "--strictPort"],
+      "port": 4173
     }
   ]
 }

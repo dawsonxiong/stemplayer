@@ -3,7 +3,7 @@ import { DEVICE_COLORS, LED_PALETTE, type StemName } from "~/lib/constants";
 import { usePlayerStore } from "~/lib/store";
 import { DeviceLoader } from "./DeviceLoader";
 
-const DeviceCanvas = lazy(() => import("./DeviceCanvas.client"));
+const DeviceCanvas = lazy(() => import("./DeviceCanvas"));
 
 interface DeviceSceneProps {
   volumes: Record<StemName, number>;

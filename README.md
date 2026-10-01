@@ -18,7 +18,7 @@ The browser uploads the song straight to Cloudflare R2 with a presigned URL. A W
 
 ## Stack
 
-React Router 7, Cloudflare Workers, R2, Workers KV, Modal, Demucs, Three.js, React Three Fiber, Web Audio, Zustand, Tailwind v4.
+vinext (Next.js App Router on Vite), Cloudflare Workers, R2, Workers KV, Modal, Demucs, Three.js, React Three Fiber, Web Audio, Zustand, Tailwind v4.
 
 ## Running locally
 

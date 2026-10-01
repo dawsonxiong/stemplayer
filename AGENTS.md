@@ -4,15 +4,16 @@ A browser replica of the Stem Player device. Upload a song, it's separated into 
 
 Read `PLAN.md` for the full build plan and component specs.
 
-Data flow: upload → R2 (presigned PUT) → `api.separate` → Modal GPU (Demucs) → webhook → KV job status → client polls `api.status` → `api.stems` serves stem URLs → Web Audio API.
+Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → KV job status → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 
-A YouTube link skips the upload: `api.link` checks the link (oEmbed gives the title) → `api.separate` → the Modal job downloads the audio with yt-dlp, then carries on as above. Repeat videos reuse their stems via a `yt:` index in KV.
+A YouTube link skips the upload: `/api/link` checks the link (oEmbed gives the title) → `/api/separate` → the Modal job downloads the audio with yt-dlp, then carries on as above. Repeat videos reuse their stems via a `yt:` index in KV.
 
 ## Commands
 
 ```sh
 pnpm dev          # secrets from 1Password (.env.op), plus a webhook tunnel for Modal
 pnpm dev:ui       # UI only: no secrets, so upload and separation won't work
+pnpm preview      # production build served by workerd
 pnpm typecheck
 pnpm lint
 pnpm format
@@ -24,10 +25,11 @@ modal deploy modal/app.py
 
 ## Stack — do not swap without asking
 
-**Not Next.js and not Vercel.** Do not apply `next16-app` hosting defaults. Follow `cf-workers`.
+**vinext, not Next.js, and not Vercel.** vinext reimplements the Next.js 16 API on Vite 8; the `next` package is not installed. Do not apply `next16-app` hosting defaults. Follow `cf-workers`.
 
-- React Router 7 in framework mode (`react-router.config.ts`, `app/routes.ts`). No App Router, no RSC, no `'use client'`.
-- Cloudflare Workers — `workers/app.ts` wraps the React Router handler. wrangler + `@cloudflare/vite-plugin`.
+- App Router via vinext (`vinext()` in `vite.config.ts`). `app/layout.tsx` and `app/page.tsx` are server components; the player is one client tree under `app/components/Home.tsx` (`"use client"`). API endpoints are route handlers in `app/api/**/route.ts`, not server actions.
+- Cloudflare Workers — `wrangler.jsonc` points `main` at vinext's `vinext/server/fetch-handler`. Route handlers read bindings with `import { env } from "cloudflare:workers"`. wrangler + `@cloudflare/vite-plugin`.
+- `pnpm typecheck` runs `vinext typegen`, which writes `next-env.d.ts` and `.next/types` (`RouteContext<"/api/...">`). Both are generated and gitignored.
 - R2 (`AUDIO_BUCKET`) for uploads and stems; KV (`JOBS`) for job status.
 - Modal (`modal/app.py`) runs Demucs 4.0.1 on GPU.
 - Three.js via `@react-three/fiber` + drei; zustand; framer-motion; aws4fetch.
@@ -49,7 +51,7 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 
 - Audio state lives in zustand, never in React state. Never re-create the `AudioContext`.
 - Secrets are wrangler secrets, not vars: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `WEBHOOK_SECRET`.
-- Verify the webhook secret in `api.webhook.ts` against `WEBHOOK_SECRET`. The same secret is the bearer token the Worker sends to Modal (Modal secret `stemplayer-webhook`).
+- Verify the webhook secret in `app/api/webhook/route.ts` against `WEBHOOK_SECRET`. The same secret is the bearer token the Worker sends to Modal (Modal secret `stemplayer-webhook`).
 - The browser never talks to Modal directly.
 - Uploads go straight to R2 via presigned URL, not through the Worker.
 - KV is eventually consistent — poll with backoff.
