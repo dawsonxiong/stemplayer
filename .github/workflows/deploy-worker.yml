@@ -1,0 +1,36 @@
+# Redeploys the site to Cloudflare Workers whenever app code lands on main.
+# Branch pushes don't deploy: there is one Worker, and it serves production.
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    # Modal has its own workflow, and docs don't change the build.
+    paths-ignore: ["modal/**", "docs/**", "**/*.md"]
+  workflow_dispatch:
+
+# Only reads the repo; the deploy authenticates with the Cloudflare token.
+permissions:
+  contents: read
+
+# A newer push supersedes a deploy that hasn't finished.
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Runtime secrets live on the Worker, so only the deploy token is needed.
+      - run: pnpm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_WORKERS_API_TOKEN }}

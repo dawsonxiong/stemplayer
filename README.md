@@ -38,7 +38,7 @@ To deploy:
 
 ```sh
 modal deploy modal/app.py
-pnpm deploy
+pnpm run deploy
 ```
 
 Other scripts: `pnpm typecheck`, `pnpm lint`, `pnpm format`.

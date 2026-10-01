@@ -15,7 +15,7 @@ pnpm typecheck
 pnpm lint
 pnpm format
 pnpm build
-pnpm deploy
+pnpm run deploy
 pnpm wrangler tail
 modal deploy modal/app.py
 ```
