@@ -10,12 +10,14 @@ const UPLOAD_STEPS: Step[] = [
   { id: "load", label: "Load stems" },
 ];
 
-/** A link has nothing to upload: the GPU job fetches the song once it's
- *  running, finding Spotify and Apple Music songs on YouTube first. */
+/** A link has nothing to upload. It's looked up first, which checks the song
+ *  exists and gets its title, then the GPU job fetches it once it's running,
+ *  finding Spotify and Apple Music songs on YouTube first. */
 function stepsFor(source: Source): Step[] {
   if (source === "file") return UPLOAD_STEPS;
   const fetch = MATCHED_PROVIDERS.includes(source) ? "Find on YouTube" : "Download audio";
   return [
+    { id: "lookup", label: "Get song" },
     { id: "start", label: "Start GPU" },
     { id: "fetch", label: fetch },
     { id: "separate", label: "Separate stems" },

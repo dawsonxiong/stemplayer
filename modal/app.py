@@ -46,7 +46,8 @@ class UserError(Exception):
 
 
 class YouTubeBlocked(UserError):
-    """YouTube refused this server, not the song: worth trying another route."""
+    """YouTube refused this server, not the song: worth trying another route,
+    and worth the person trying again, since a new run gets a new server."""
 
 
 # APIFY_TOKEN, for downloading through Apify when YouTube refuses Modal.
@@ -82,6 +83,11 @@ DOWNLOAD_FAILED = (
     "blocked in some regions. Try another link, or upload the song as a file."
 )
 
+
+AGE_RESTRICTED = (
+    "That video is age-restricted, so it can’t be downloaded. "
+    "Try another link, or upload the song as a file."
+)
 
 YOUTUBE_REFUSED = (
     "YouTube isn’t letting us download right now. Try a SoundCloud link, "
@@ -127,6 +133,8 @@ def _download(url: str, tmpdir: str) -> dict:
         # server, not the song, so say so rather than blame the link.
         if "confirm you’re not a bot" in str(e) or "confirm you're not a bot" in str(e):
             raise YouTubeBlocked(YOUTUBE_REFUSED) from e
+        if "confirm your age" in str(e):
+            raise UserError(AGE_RESTRICTED) from e
         # The detail goes to the logs, not the person.
         raise UserError(DOWNLOAD_FAILED) from e
 
@@ -144,7 +152,7 @@ def _download_via_apify(video_id: str, tmpdir: str) -> dict:
 
     token = os.environ.get("APIFY_TOKEN")
     if not token:
-        raise UserError(YOUTUBE_REFUSED)
+        raise YouTubeBlocked(YOUTUBE_REFUSED)
     try:
         res = requests.post(
             f"https://api.apify.com/v2/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
@@ -167,11 +175,11 @@ def _download_via_apify(video_id: str, tmpdir: str) -> dict:
         res.raise_for_status()
         items = res.json()
     except (requests.RequestException, ValueError) as e:
-        raise UserError(YOUTUBE_REFUSED) from e
+        raise YouTubeBlocked(YOUTUBE_REFUSED) from e
 
     item = items[0] if isinstance(items, list) and items else {}
     if item.get("status") != "Success" or not item.get("audioFileUrl"):
-        raise UserError(YOUTUBE_REFUSED) from RuntimeError(f"Apify: {item.get('error')}")
+        raise YouTubeBlocked(YOUTUBE_REFUSED) from RuntimeError(f"Apify: {item.get('error')}")
     # Only known now: the refused page never gave a length.
     if (item.get("duration") or 0) > MAX_DURATION_MINUTES * 60:
         raise UserError(
@@ -384,6 +392,9 @@ def separate(
                 "status": "error",
                 "error": str(e.__cause__ or e),
                 **({"user_error": str(e)} if isinstance(e, UserError) else {}),
+                # Only a refusal might go differently next time; a song that's
+                # too long or age-restricted won't.
+                **({"retryable": True} if isinstance(e, YouTubeBlocked) else {}),
             },
         )
         return {"task_id": task_id, "status": "error", "error": str(e)}

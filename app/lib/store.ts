@@ -3,9 +3,10 @@ import type { DeviceColor, EffectName, StemName } from "./constants";
 import type { Provider } from "./links";
 
 /** Where a song is in the pipeline. Kept after a failure to show which broke.
- *  An upload goes upload → start → separate → load; a link has nothing to
- *  upload, and the GPU job fetches it instead: start → fetch → separate → load. */
-export type Stage = "upload" | "start" | "fetch" | "separate" | "load";
+ *  An upload goes upload → start → separate → load. A link is looked up
+ *  instead of uploaded, and the GPU job fetches it once it's running:
+ *  lookup → start → fetch → separate → load. */
+export type Stage = "upload" | "lookup" | "start" | "fetch" | "separate" | "load";
 
 /** Where the song came from: a file, or a link to one of these sites. */
 export type Source = "file" | Provider;
@@ -23,6 +24,8 @@ interface PlayerState {
   /** For a Spotify or Apple Music song, the YouTube video it was found as. */
   matchedVideo: { id: string; title: string } | null;
   errorMessage: string | null;
+  /** Whether the failed attempt could go differently a second time. */
+  canRetry: boolean;
 
   // Playback
   isPlaying: boolean;
@@ -78,6 +81,7 @@ interface PlayerState {
   setSource: (source: Source | null) => void;
   setMatchedVideo: (video: PlayerState["matchedVideo"]) => void;
   setErrorMessage: (message: string | null) => void;
+  setCanRetry: (canRetry: boolean) => void;
   toggleEffectsMode: () => void;
   setEcho: (params: Partial<PlayerState["echo"]>) => void;
   setLoop: (params: Partial<PlayerState["loop"]>) => void;
@@ -98,6 +102,7 @@ const initialState = {
   source: null as Source | null,
   matchedVideo: null as PlayerState["matchedVideo"],
   errorMessage: null,
+  canRetry: false,
   isPlaying: false,
   currentTime: 0,
   duration: 0,
@@ -137,6 +142,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   setSource: (source) => set({ source }),
   setMatchedVideo: (matchedVideo) => set({ matchedVideo }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
+  setCanRetry: (canRetry) => set({ canRetry }),
   toggleEffectsMode: () => set((s) => ({ effectsMode: !s.effectsMode })),
   setEcho: (params) => set((s) => ({ echo: { ...s.echo, ...params } })),
   setLoop: (params) => set((s) => ({ loop: { ...s.loop, ...params } })),

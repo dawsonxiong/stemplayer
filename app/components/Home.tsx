@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { preload } from "react-dom";
 import { Device } from "~/components/device/Device";
 import { ColorPicker } from "~/components/device/ColorPicker";
@@ -35,21 +35,24 @@ import {
 
 // Said in the product's voice: what happened, then what to do.
 const EXPIRED_ERROR = "That song has expired. Drop it again to split it.";
-const OPEN_ERROR = "That song didn’t load. Check your connection and try again.";
+const OPEN_ERROR = "That song didn’t load. Check your connection.";
 
-function stageError(stage: Stage, source: Source): string {
-  const retry = source === "file" ? "Drop the song again" : "Paste the link again";
+// A "Try again" button follows these, so they say what happened, not what
+// to do about it.
+function stageError(stage: Stage): string {
   switch (stage) {
     case "upload":
-      return "The upload didn’t finish. Check your connection, then drop the song again.";
+      return "The upload didn’t finish. Check your connection.";
+    case "lookup":
+      return "That link couldn’t be read. Check your connection.";
     case "start":
-      return `The GPU didn’t start. ${retry} to retry.`;
+      return "The GPU didn’t start.";
     case "fetch":
-      return `The song didn’t download. ${retry} to retry.`;
+      return "The song didn’t download.";
     case "separate":
-      return `Separating the stems failed. ${retry} to retry.`;
+      return "Separating the stems failed.";
     case "load":
-      return "The stems are ready but didn’t load. Reload the page to try again.";
+      return "The stems are ready but didn’t load.";
   }
 }
 
@@ -81,12 +84,16 @@ export function Home() {
   const isOn = usePlayerStore((s) => s.isOn);
   const uploadStage = usePlayerStore((s) => s.stage);
   const matchedVideo = usePlayerStore((s) => s.matchedVideo);
+  const canRetry = usePlayerStore((s) => s.canRetry);
+  /** Runs the last split or load again, for the "Try again" button. */
+  const retry = useRef<(() => void) | null>(null);
 
   useKeyboardShortcuts(audioEngine);
 
   /** Splits a song from a file or a link, then loads its stems. */
   const split = useCallback(
     async (input: { file: File } | { url: string }) => {
+      retry.current = () => void split(input);
       // The link field only submits links it could read, so there's a provider.
       const source: Source =
         "file" in input ? "file" : (parseLink(input.url)?.provider ?? "youtube");
@@ -96,7 +103,7 @@ export function Home() {
       // A link's title comes from its site; until then, the steps stand alone.
       if ("file" in input) store.setTrackTitle(titleFromFilename(input.file.name));
       store.setTrackDate(Date.now());
-      let stage: Stage = source === "file" ? "upload" : "start";
+      let stage: Stage = source === "file" ? "upload" : "lookup";
       const enter = (next: Stage) => {
         stage = next;
         store.setStage(next);
@@ -109,14 +116,22 @@ export function Home() {
         store.setStatus("processing");
         await triggerSeparation(taskId);
 
-        await pollStatus(taskId, (progress) => {
-          // The job's first progress report means the GPU is up and working.
-          // For a link it then fetches the song, done when it reports 15.
-          const now = usePlayerStore.getState().stage;
-          if (progress > 0 && now === "start") enter(source === "file" ? "separate" : "fetch");
-          if (progress >= 15 && usePlayerStore.getState().stage === "fetch") enter("separate");
-          store.setProcessingProgress(progress);
-        });
+        try {
+          await pollStatus(taskId, (progress) => {
+            // The job's first progress report means the GPU is up and working.
+            // For a link it then fetches the song, done when it reports 15.
+            const now = usePlayerStore.getState().stage;
+            if (progress > 0 && now === "start") enter(source === "file" ? "separate" : "fetch");
+            if (progress >= 15 && usePlayerStore.getState().stage === "fetch") enter("separate");
+            store.setProcessingProgress(progress);
+          });
+        } catch (err) {
+          // A link the job can't fetch can fail before polling sees the GPU
+          // report in. The song is the problem, so blame the fetch step.
+          const stuck = usePlayerStore.getState().stage === "start";
+          if (source !== "file" && err instanceof UserFacingError && stuck) enter("fetch");
+          throw err;
+        }
       };
 
       try {
@@ -175,9 +190,9 @@ export function Home() {
         }
       } catch (err) {
         store.setStatus("error");
-        store.setErrorMessage(
-          err instanceof UserFacingError ? err.message : stageError(stage, source),
-        );
+        store.setErrorMessage(err instanceof UserFacingError ? err.message : stageError(stage));
+        // A song that's too long or private would only fail the same way.
+        store.setCanRetry(!(err instanceof UserFacingError) || err.retryable);
       }
     },
     [audioEngine],
@@ -190,6 +205,7 @@ export function Home() {
   const openTrack = useCallback(
     async (taskId: string, knownTitle?: string) => {
       if (!audioEngine) return;
+      retry.current = () => void openTrack(taskId, knownTitle);
       const store = usePlayerStore.getState();
       store.reset();
       store.setTaskId(taskId);
@@ -217,6 +233,7 @@ export function Home() {
         store.reset();
         store.setStatus("error");
         store.setErrorMessage(expired ? EXPIRED_ERROR : OPEN_ERROR);
+        store.setCanRetry(!expired);
       }
     },
     [audioEngine],
@@ -341,12 +358,19 @@ export function Home() {
           )}
 
           {status === "error" && errorMessage && (
-            <p
-              role="alert"
-              className="text-center text-body text-balance text-magenta-ink lg:text-left"
-            >
-              {errorMessage}
-            </p>
+            <div className="flex flex-col items-center gap-3 lg:items-start">
+              <p
+                role="alert"
+                className="text-center text-body text-balance text-magenta-ink lg:text-left"
+              >
+                {errorMessage}
+              </p>
+              {canRetry && (
+                <button type="button" onClick={() => retry.current?.()} className="btn-secondary">
+                  Try again
+                </button>
+              )}
+            </div>
           )}
 
           <UploadZone onFileSelected={handleFileSelected} onLinkSubmitted={handleLinkSubmitted} />

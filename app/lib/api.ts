@@ -1,8 +1,17 @@
 import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
 
 /** An error whose message is written for the person using the app (a size
- *  limit, the hourly cap) rather than for a developer. */
-export class UserFacingError extends Error {}
+ *  limit, the hourly cap) rather than for a developer. Most are about the song
+ *  and would only happen again, so trying again is offered only when
+ *  `retryable` says it might go differently. */
+export class UserFacingError extends Error {
+  constructor(
+    message: string,
+    readonly retryable = false,
+  ) {
+    super(message);
+  }
+}
 
 /** The task, or its stems, no longer exist: expired, or never finished. */
 export class TrackNotFoundError extends Error {}
@@ -10,7 +19,8 @@ export class TrackNotFoundError extends Error {}
 /** Client errors carry a message meant for the user; server errors do not. */
 async function failure(res: Response, fallback: string): Promise<Error> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
-  if (res.status < 500 && body.error) return new UserFacingError(body.error);
+  // 424: a site the song was looked up on failed, which may pass.
+  if (res.status < 500 && body.error) return new UserFacingError(body.error, res.status === 424);
   return new Error(body.error || `${fallback} (${res.status})`);
 }
 
@@ -93,6 +103,7 @@ interface JobStatus {
   progress?: number;
   error?: string;
   userError?: string;
+  retryable?: boolean;
 }
 
 export async function pollStatus(
@@ -114,7 +125,7 @@ export async function pollStatus(
 
     if (data.status === "ready") return data;
     if (data.status === "error") {
-      if (data.userError) throw new UserFacingError(data.userError);
+      if (data.userError) throw new UserFacingError(data.userError, data.retryable === true);
       throw new Error(data.error || "Separation failed");
     }
     if (typeof data.progress === "number") onProgress?.(data.progress);

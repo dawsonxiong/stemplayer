@@ -17,6 +17,7 @@ export async function POST(request: Request) {
     stems,
     error,
     user_error,
+    retryable,
     title,
     matched_youtube_id,
     matched_title,
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
     /** Why it failed, worded for the person, when it was the song and not
      *  the system: a video too long, private or blocked. */
     user_error?: string;
+    /** Whether trying the same song again might work, for a user_error. */
+    retryable?: boolean;
     /** The fetched song's title, for when the link lookup couldn't give one. */
     title?: string;
     /** For a Spotify or Apple Music song, the YouTube video found for it. */
@@ -67,6 +70,7 @@ export async function POST(request: Request) {
       ...(stems && { stems }),
       ...(error && { error }),
       ...(user_error && { userError: user_error.slice(0, 300) }),
+      ...(retryable === true && { retryable: true }),
       ...(title && !existing.title && { title: title.slice(0, 200) }),
       ...(matchedId && {
         matchedVideo: { id: matchedId, title: (matched_title ?? "").slice(0, 200) },
