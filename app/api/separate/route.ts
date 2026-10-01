@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { SEPARATIONS_PER_HOUR } from "~/lib/constants";
+import type { FetchSpec } from "~/lib/links.server";
 
 const TTL = { expirationTtl: 86400 * 14 };
 
@@ -11,11 +12,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "Task not found" }, { status: 404 });
   }
 
-  // An upload has an R2 key; a YouTube link has a video ID instead.
+  // An upload has an R2 key; a link says what the job should fetch instead.
   const jobData = JSON.parse(raw) as {
     status: string;
     r2Key?: string;
-    youtubeId?: string;
+    fetch?: FetchSpec;
     createdAt: number;
   };
 
@@ -58,7 +59,7 @@ export async function POST(request: Request) {
     },
     body: JSON.stringify({
       task_id: taskId,
-      ...(jobData.youtubeId ? { youtube_id: jobData.youtubeId } : { input_r2_key: jobData.r2Key }),
+      ...(jobData.fetch ?? { input_r2_key: jobData.r2Key }),
       webhook_url: `${origin}/api/webhook`,
     }),
   });

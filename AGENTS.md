@@ -6,7 +6,13 @@ Read `PLAN.md` for the full build plan and component specs.
 
 Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → KV job status → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 
-A YouTube link skips the upload: `/api/link` checks the link (oEmbed gives the title) → `/api/separate` → the Modal job downloads the audio with yt-dlp, then carries on as above. Repeat videos reuse their stems via a `yt:` index in KV.
+A song link skips the upload: `/api/link` parses it (`app/lib/links.ts`) and looks it up (`app/lib/links.server.ts`) → `/api/separate` → the Modal job fetches the audio with yt-dlp, then carries on as above.
+
+- YouTube and SoundCloud are downloaded directly; oEmbed gives the title, and for SoundCloud the numeric track ID.
+- Spotify and Apple Music are DRM-protected, so the job searches YouTube for the artist and title and keeps a result within a few seconds of the song's length. Apple's metadata comes from the iTunes Lookup API. Spotify's comes from the `__NEXT_DATA__` on its embed page, which is not a published API and can break without warning.
+- YouTube refuses most of Modal's shared cloud IPs ("Sign in to confirm you're not a bot"), whatever the yt-dlp client or PO token. When it does, the job falls back to the Apify actor `lurkapi~youtube-to-mp3-audio-downloader` with residential proxies, which returns a link to the audio file. It needs the Modal secret `stemplayer-apify` (`APIFY_TOKEN`) and costs about a cent per song.
+- Modal only ever gets IDs or search terms, never a URL to fetch.
+- Repeat songs reuse their stems via a `link:<version>:<provider>:<id>` index in KV.
 
 ## Commands
 
@@ -51,6 +57,7 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 
 - Audio state lives in zustand, never in React state. Never re-create the `AudioContext`.
 - Secrets are wrangler secrets, not vars: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `WEBHOOK_SECRET`.
+- Modal secrets: `r2-creds`, `stemplayer-webhook` (`WEBHOOK_SECRET`), `stemplayer-apify` (`APIFY_TOKEN`). A missing one fails the Modal deploy.
 - Verify the webhook secret in `app/api/webhook/route.ts` against `WEBHOOK_SECRET`. The same secret is the bearer token the Worker sends to Modal (Modal secret `stemplayer-webhook`).
 - The browser never talks to Modal directly.
 - Uploads go straight to R2 via presigned URL, not through the Worker.

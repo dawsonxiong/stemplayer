@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { usePlayerStore } from "~/lib/store";
 import { MAX_FILE_SIZE_MB, MAX_DURATION_MINUTES, ACCEPTED_FORMATS } from "~/lib/constants";
-import { parseYouTubeId } from "~/lib/youtube";
-
-const NOT_A_VIDEO = "That isn’t a link to a YouTube video. Copy the link from the video’s page.";
+import { COLLECTION_LINK, parseLink, UNSUPPORTED_LINK } from "~/lib/links";
 
 interface UploadZoneProps {
   onFileSelected: (file: File) => void;
@@ -21,8 +19,9 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
   const submitLink = useCallback(
     (url: string) => {
       setError(null);
-      if (!parseYouTubeId(url)) {
-        setError(NOT_A_VIDEO);
+      const parsed = parseLink(url);
+      if (!parsed || parsed.kind === "collection") {
+        setError(parsed ? COLLECTION_LINK : UNSUPPORTED_LINK);
         return;
       }
       setLink("");
@@ -122,7 +121,7 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     };
   }, [accepting, validateAndSubmit]);
 
-  // Like a dropped file, a YouTube link pasted anywhere on the page counts,
+  // Like a dropped file, a song link pasted anywhere on the page counts,
   // not only one pasted into the field. Pastes into other fields are theirs.
   useEffect(() => {
     if (!accepting) return;
@@ -130,7 +129,7 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
       const target = e.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable]")) return;
       const text = e.clipboardData?.getData("text/plain").trim() ?? "";
-      if (!parseYouTubeId(text)) return;
+      if (!parseLink(text)) return;
       e.preventDefault();
       submitLink(text);
     };
@@ -194,8 +193,8 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
           spellCheck={false}
           value={link}
           onChange={(e) => setLink(e.target.value)}
-          placeholder="or paste a YouTube link"
-          aria-label="YouTube link"
+          placeholder="or paste a song link"
+          aria-label="Song link from YouTube, SoundCloud, Spotify or Apple Music"
           aria-describedby={error ? errorId : undefined}
           className="min-w-0 flex-1 bg-transparent py-2.5 text-body text-ink placeholder:text-ink-muted"
         />
@@ -206,6 +205,9 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
           Split
         </button>
       </form>
+      <p aria-hidden="true" className="-mt-1 px-4 text-caption text-ink-muted">
+        YouTube, SoundCloud, Spotify or Apple Music
+      </p>
 
       {error && (
         <p

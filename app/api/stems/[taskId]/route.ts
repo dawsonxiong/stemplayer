@@ -12,8 +12,10 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
 
   const data = JSON.parse(raw) as {
     status: string;
-    /** A YouTube video's title. Uploads only have their filename. */
+    /** A link's song title. Uploads only have their filename. */
     title?: string;
+    /** For a Spotify or Apple Music song, the YouTube video it was found as. */
+    matchedVideo?: { id: string; title: string };
     filename?: string;
     createdAt?: number;
     stems?: Record<string, string>;
@@ -34,5 +36,6 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     stems: Object.fromEntries(entries),
     title: data.title ?? (data.filename ? titleFromFilename(data.filename) : "Untitled"),
     createdAt: data.createdAt ?? null,
+    matchedVideo: data.matchedVideo ?? null,
   });
 }

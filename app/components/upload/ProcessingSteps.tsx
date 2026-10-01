@@ -1,20 +1,27 @@
+import { MATCHED_PROVIDERS } from "~/lib/links";
 import { usePlayerStore, type Source, type Stage } from "~/lib/store";
 
-const STEPS: Record<Source, { id: Stage; label: string }[]> = {
-  file: [
-    { id: "upload", label: "Upload" },
+type Step = { id: Stage; label: string };
+
+const UPLOAD_STEPS: Step[] = [
+  { id: "upload", label: "Upload" },
+  { id: "start", label: "Start GPU" },
+  { id: "separate", label: "Separate stems" },
+  { id: "load", label: "Load stems" },
+];
+
+/** A link has nothing to upload: the GPU job fetches the song once it's
+ *  running, finding Spotify and Apple Music songs on YouTube first. */
+function stepsFor(source: Source): Step[] {
+  if (source === "file") return UPLOAD_STEPS;
+  const fetch = MATCHED_PROVIDERS.includes(source) ? "Find on YouTube" : "Download audio";
+  return [
     { id: "start", label: "Start GPU" },
+    { id: "fetch", label: fetch },
     { id: "separate", label: "Separate stems" },
     { id: "load", label: "Load stems" },
-  ],
-  // Nothing to upload: the GPU job downloads the video once it's running.
-  link: [
-    { id: "start", label: "Start GPU" },
-    { id: "fetch", label: "Download audio" },
-    { id: "separate", label: "Separate stems" },
-    { id: "load", label: "Load stems" },
-  ],
-};
+  ];
+}
 
 type StepState = "done" | "active" | "failed" | "pending";
 
@@ -43,7 +50,7 @@ export function ProcessingSteps() {
   const failed = status === "error";
   if (!stage || (status !== "uploading" && status !== "processing" && !failed)) return null;
 
-  const steps = STEPS[source ?? "file"];
+  const steps = stepsFor(source ?? "file");
   const current = steps.findIndex((s) => s.id === stage);
 
   return (

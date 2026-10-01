@@ -1,6 +1,7 @@
 /** Recognising a song that was split before, by the SHA-256 of its bytes or
- *  by the YouTube video it came from. */
+ *  by the link it came from. */
 import { AUTO_DELETE_DAYS } from "./constants";
+import type { Provider } from "./links";
 
 export const SHA256 = /^[0-9a-f]{64}$/;
 
@@ -12,7 +13,8 @@ const OUTPUT_VERSION = "htdemucs-mp3-192";
 const CACHE_MAX_AGE_MS = (AUTO_DELETE_DAYS - 2) * 86_400_000;
 
 export const stemCacheKey = (hash: string) => `hash:${OUTPUT_VERSION}:${hash}`;
-export const youTubeCacheKey = (videoId: string) => `yt:${OUTPUT_VERSION}:${videoId}`;
+export const linkCacheKey = (provider: Provider, id: string) =>
+  `link:${OUTPUT_VERSION}:${provider}:${id}`;
 
 /** The finished task an index key points at, if its stems are still fresh. */
 export async function findCachedTask(env: Env, indexKey: string): Promise<string | null> {

@@ -38,8 +38,8 @@ export async function requestUploadUrl(file: File, hash: string | null) {
   return res.json() as Promise<UploadTicket>;
 }
 
-/** A task for a YouTube video, or the finished task for the same video. Its
- *  title is null when YouTube wouldn't say; the job fills it in later. */
+/** A task for a song link, or the finished task for the same song. Its title
+ *  is null when the site wouldn't say; the job fills it in later. */
 export type LinkTicket =
   | { taskId: string; title: string | null }
   | { taskId: string; cached: true };
@@ -131,5 +131,7 @@ export async function fetchStemUrls(taskId: string) {
     stems: Record<string, string>;
     title: string;
     createdAt: number | null;
+    /** For a Spotify or Apple Music song, the YouTube video it was found as. */
+    matchedVideo: { id: string; title: string } | null;
   }>;
 }

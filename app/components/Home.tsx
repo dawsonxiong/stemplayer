@@ -20,6 +20,7 @@ import { MODEL_URL } from "~/lib/model";
 import { trackDetails } from "~/lib/utils/format";
 import { titleFromFilename } from "~/lib/utils/title";
 import { findTrack, forgetTrack, rememberTrack } from "~/lib/history";
+import { parseLink } from "~/lib/links";
 import {
   hashFile,
   requestLinkTask,
@@ -36,21 +37,17 @@ import {
 const EXPIRED_ERROR = "That song has expired. Drop it again to split it.";
 const OPEN_ERROR = "That song didn’t load. Check your connection and try again.";
 
-const RETRY: Record<Source, string> = {
-  file: "Drop the song again",
-  link: "Paste the link again",
-};
-
 function stageError(stage: Stage, source: Source): string {
+  const retry = source === "file" ? "Drop the song again" : "Paste the link again";
   switch (stage) {
     case "upload":
       return "The upload didn’t finish. Check your connection, then drop the song again.";
     case "start":
-      return `The GPU didn’t start. ${RETRY[source]} to retry.`;
+      return `The GPU didn’t start. ${retry} to retry.`;
     case "fetch":
-      return `The video didn’t download. ${RETRY[source]} to retry.`;
+      return `The song didn’t download. ${retry} to retry.`;
     case "separate":
-      return `Separating the stems failed. ${RETRY[source]} to retry.`;
+      return `Separating the stems failed. ${retry} to retry.`;
     case "load":
       return "The stems are ready but didn’t load. Reload the page to try again.";
   }
@@ -83,17 +80,20 @@ export function Home() {
   const errorMessage = usePlayerStore((s) => s.errorMessage);
   const isOn = usePlayerStore((s) => s.isOn);
   const uploadStage = usePlayerStore((s) => s.stage);
+  const matchedVideo = usePlayerStore((s) => s.matchedVideo);
 
   useKeyboardShortcuts(audioEngine);
 
-  /** Splits a song from a file or a YouTube link, then loads its stems. */
+  /** Splits a song from a file or a link, then loads its stems. */
   const split = useCallback(
     async (input: { file: File } | { url: string }) => {
-      const source: Source = "file" in input ? "file" : "link";
+      // The link field only submits links it could read, so there's a provider.
+      const source: Source =
+        "file" in input ? "file" : (parseLink(input.url)?.provider ?? "youtube");
       const store = usePlayerStore.getState();
       store.reset();
       store.setSource(source);
-      // A link's title comes from YouTube; until then, the steps stand alone.
+      // A link's title comes from its site; until then, the steps stand alone.
       if ("file" in input) store.setTrackTitle(titleFromFilename(input.file.name));
       store.setTrackDate(Date.now());
       let stage: Stage = source === "file" ? "upload" : "start";
@@ -111,9 +111,9 @@ export function Home() {
 
         await pollStatus(taskId, (progress) => {
           // The job's first progress report means the GPU is up and working.
-          // For a link it then downloads the video, done when it reports 15.
+          // For a link it then fetches the song, done when it reports 15.
           const now = usePlayerStore.getState().stage;
-          if (progress > 0 && now === "start") enter(source === "link" ? "fetch" : "separate");
+          if (progress > 0 && now === "start") enter(source === "file" ? "separate" : "fetch");
           if (progress >= 15 && usePlayerStore.getState().stage === "fetch") enter("separate");
           store.setProcessingProgress(progress);
         });
@@ -154,10 +154,11 @@ export function Home() {
         // Set before loading, so a reload retries the load and not the GPU run.
         enter("load");
         setTrackParam(taskId);
-        const { stems, title, createdAt } = await fetchStemUrls(taskId);
+        const { stems, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
         // A file keeps the name it was dropped with, even on a cache hit from
-        // someone else's upload. A video's title is the same for everyone.
-        if (source === "link") store.setTrackTitle(title);
+        // someone else's upload. A link's title is the same for everyone.
+        if (source !== "file") store.setTrackTitle(title);
+        store.setMatchedVideo(video);
         await audioEngine?.loadStems(stems);
         // Known once the stems load; otherwise it only updates during playback.
         store.setDuration(audioEngine?.duration ?? 0);
@@ -199,10 +200,11 @@ export function Home() {
       setTrackParam(taskId);
 
       try {
-        const { stems, title, createdAt } = await fetchStemUrls(taskId);
+        const { stems, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
         await audioEngine.loadStems(stems);
         store.setDuration(audioEngine.duration);
         store.setTrackTitle(knownTitle ?? title);
+        store.setMatchedVideo(video);
         store.setTrackDate(createdAt);
         remember(taskId);
         // No autoplay: the browser wants a gesture before audio starts.
@@ -275,9 +277,26 @@ export function Home() {
             <div className="flex flex-col items-center gap-1.5 text-center lg:items-start lg:text-left">
               <p className="line-clamp-3 text-display text-balance text-ink">{trackTitle}</p>
               {status === "ready" ? (
-                <p className="text-caption text-ink-muted tabular-nums">
-                  {trackDetails(duration, trackDate)}
-                </p>
+                <>
+                  <p className="text-caption text-ink-muted tabular-nums">
+                    {trackDetails(duration, trackDate)}
+                  </p>
+                  {/* Spotify and Apple Music songs are found on YouTube by
+                      search, so name the video: a wrong match is then obvious. */}
+                  {matchedVideo && (
+                    <p className="line-clamp-2 text-caption text-ink-muted">
+                      Audio from{" "}
+                      <a
+                        href={`https://www.youtube.com/watch?v=${matchedVideo.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-ink underline underline-offset-4"
+                      >
+                        {matchedVideo.title || "this YouTube video"}
+                      </a>
+                    </p>
+                  )}
+                </>
               ) : (
                 // An upload's steps say what's happening; a reopened song has none.
                 busy && !uploadStage && <p className="text-caption text-ink-muted">Loading</p>
