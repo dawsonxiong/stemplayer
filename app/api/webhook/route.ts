@@ -1,10 +1,8 @@
-import type { Route } from "./+types/api.webhook";
+import { env } from "cloudflare:workers";
 import { secretMatches } from "~/lib/utils/secret";
 import { SHA256, stemCacheKey, youTubeCacheKey } from "~/lib/stem-cache";
 
-export async function action({ request, context }: Route.ActionArgs) {
-  const env = context.cloudflare.env;
-
+export async function POST(request: Request) {
   if (!secretMatches(request.headers.get("x-webhook-secret"), env.WEBHOOK_SECRET)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }

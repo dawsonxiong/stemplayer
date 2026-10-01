@@ -13,8 +13,10 @@ dist/
 .cache/
 *.tsbuildinfo
 
-# React Router
-/.react-router/
+# vinext: `vinext typegen` output and the dev server's lock
+/.next/
+/.vinext/
+next-env.d.ts
 
 # Cloudflare
 .mf
