@@ -7,8 +7,9 @@ Kanye's Stem Player, right in the browser. Upload a song, it gets split into ste
 ## Features
 
 - Splits any song into vocals, drums, bass and everything else using Demucs
+- Upload a file or paste a YouTube link
 - Drag along the LED grooves to turn each stem up or down while it plays
-- Echo and gate effects
+- Echo, reverb and filter effects, plus a speed control
 - Record your mix
 - Keyboard shortcuts and three colourways
 
