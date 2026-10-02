@@ -1,5 +1,8 @@
 import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
 
+/** How long a KV read can be served from an edge cache before it refreshes. */
+const KV_CACHE_MS = 60_000;
+
 /** An error whose message is written for the person using the app (a size
  *  limit, the hourly cap) rather than for a developer. Most are about the song
  *  and would only happen again, so trying again is offered only when
@@ -135,7 +138,16 @@ export async function pollStatus(
 }
 
 export async function fetchStemUrls(taskId: string) {
-  const res = await fetch(`/api/stems/${taskId}`);
+  let res = await fetch(`/api/stems/${taskId}`);
+  // 409: this read is behind the status poll that just saw "ready". KV
+  // caches a read for up to a minute, so give it that long to catch up.
+  const deadline = Date.now() + KV_CACHE_MS;
+  let interval = POLL_INTERVAL_MS;
+  while (res.status === 409 && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, interval));
+    interval = Math.min(interval * 1.25, POLL_MAX_INTERVAL_MS);
+    res = await fetch(`/api/stems/${taskId}`);
+  }
   if (res.status === 404) throw new TrackNotFoundError("Stems not found");
   if (!res.ok) throw new Error(`Failed to fetch stem URLs (${res.status})`);
   return res.json() as Promise<{

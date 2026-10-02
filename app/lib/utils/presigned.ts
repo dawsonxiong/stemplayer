@@ -5,7 +5,7 @@ export const BUCKET = "stem-player-audio";
 interface PresignedUrlOptions {
   env: Env;
   key: string;
-  method?: "GET" | "PUT";
+  method?: "GET" | "HEAD" | "PUT";
   contentType?: string;
   expiresIn?: number;
 }

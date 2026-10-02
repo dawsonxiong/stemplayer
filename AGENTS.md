@@ -63,3 +63,8 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 - Uploads go straight to R2 via presigned URL, not through the Worker.
 - KV is eventually consistent — poll with backoff.
 - Do not hand-edit `worker-configuration.d.ts`.
+
+## Git
+
+- Name branches `dawson/<short-name>`: a few words, kebab-case (`dawson/cache-fix`).
+- Commit messages follow Conventional Commits, lowercase: `fix: ...`, `feat: ...`.

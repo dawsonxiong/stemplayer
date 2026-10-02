@@ -21,8 +21,13 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     stems?: Record<string, string>;
   };
 
+  // KV is eventually consistent, so this read can lag the status poll that
+  // just saw "ready". 409 tells the client to ask again, not to give up.
+  if (data.status === "uploaded" || data.status === "processing") {
+    return Response.json({ error: "Stems not ready" }, { status: 409 });
+  }
   if (data.status !== "ready" || !data.stems) {
-    return Response.json({ error: "Stems not ready" }, { status: 404 });
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
 
   const entries = await Promise.all(
