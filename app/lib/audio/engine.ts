@@ -73,7 +73,10 @@ export class AudioEngine {
     );
 
     // Stems share a length, so the first one speaks for the track.
-    entries[0]?.[1].addEventListener("ended", () => this.onEnded?.());
+    entries[0]?.[1].addEventListener("ended", () => {
+      this._recorder?.pause();
+      this.onEnded?.();
+    });
 
     for (const [name, audio] of entries) {
       const source = ctx.createMediaElementSource(audio);
@@ -99,12 +102,15 @@ export class AudioEngine {
     for (const [, stem] of this.stems) {
       stem.audio.play();
     }
+    // A take only runs while the song does, so it never records silence.
+    this._recorder?.resume();
   }
 
   pause(): void {
     for (const [, stem] of this.stems) {
       stem.audio.pause();
     }
+    this._recorder?.pause();
   }
 
   seek(time: number): void {

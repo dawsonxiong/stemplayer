@@ -4,6 +4,7 @@ import { usePlayerStore } from "~/lib/store";
 import { EFFECTS, EFFECT_NAMES, type EffectName } from "~/lib/constants";
 import { syncEffects, toggleEffects } from "~/lib/effects";
 import { Segmented } from "~/components/ui/Segmented";
+import { SliderRow } from "~/components/ui/ControlRow";
 
 interface EffectsPanelProps {
   audioEngine: AudioEngine | null;
@@ -42,9 +43,10 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
       <button
         type="button"
         onClick={() => toggleEffects(audioEngine)}
-        aria-pressed={effectsMode}
+        role="switch"
+        aria-checked={effectsMode}
         aria-controls={panelId}
-        className="flex items-center gap-2.5 rounded-panel px-4 py-2.5 text-body text-ink transition-colors hover:bg-well"
+        className="flex items-center gap-2.5 rounded-panel px-4 py-2.5 text-body text-ink"
       >
         <svg
           width="14"
@@ -60,21 +62,15 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
           <path d="M8 17.5h8a4 4 0 0 0 0-8H8a4 4 0 0 1 0-8h8" />
         </svg>
         Effects
-        {/* Opening the panel is what turns effects on; the chevron says it opens. */}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        {/* A switch, not a disclosure: the controls show only while effects play. */}
+        <span
           aria-hidden="true"
-          className={`ml-auto text-ink-muted transition-transform duration-200 ${effectsMode ? "rotate-180" : ""}`}
+          className={`ml-auto flex h-[18px] w-8 items-center rounded-full p-0.5 transition-colors ${effectsMode ? "bg-ink" : "bg-well"}`}
         >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
+          <span
+            className={`size-3.5 rounded-full bg-page transition-transform duration-200 ${effectsMode ? "translate-x-3.5" : ""}`}
+          />
+        </span>
       </button>
 
       {effectsMode && (
@@ -89,7 +85,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
 
           {effect === "echo" && (
             <>
-              <EffectSlider
+              <SliderRow
                 label="Time"
                 value={echo.delayTime}
                 min={EFFECTS.echo.min}
@@ -97,7 +93,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
                 format={(v) => `${Math.round(v * 1000)} ms`}
                 onChange={(v) => update((s) => s.setEcho({ delayTime: v }))}
               />
-              <EffectSlider
+              <SliderRow
                 label="Repeats"
                 value={echo.feedback}
                 min={EFFECTS.feedback.min}
@@ -105,7 +101,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
                 format={(v) => percent(v / EFFECTS.feedback.max)}
                 onChange={(v) => update((s) => s.setEcho({ feedback: v }))}
               />
-              <EffectSlider
+              <SliderRow
                 label="Mix"
                 value={echo.wet}
                 min={0}
@@ -118,7 +114,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
 
           {effect === "reverb" && (
             <>
-              <EffectSlider
+              <SliderRow
                 label="Size"
                 value={reverb.size}
                 min={EFFECTS.reverbSize.min}
@@ -126,7 +122,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
                 format={(v) => `${v.toFixed(1)} s`}
                 onChange={(v) => update((s) => s.setReverb({ size: v }))}
               />
-              <EffectSlider
+              <SliderRow
                 label="Mix"
                 value={reverb.wet}
                 min={0}
@@ -139,7 +135,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
 
           {effect === "filter" && (
             <>
-              <EffectSlider
+              <SliderRow
                 label="Cutoff"
                 value={filter.cutoff}
                 min={0}
@@ -147,7 +143,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
                 format={(v) => formatHz(200 * Math.pow(100, v))}
                 onChange={(v) => update((s) => s.setFilter({ cutoff: v }))}
               />
-              <EffectSlider
+              <SliderRow
                 label="Resonance"
                 value={filter.resonance}
                 min={EFFECTS.resonance.min}
@@ -169,51 +165,4 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
 
 function formatHz(hz: number) {
   return hz >= 1000 ? `${(hz / 1000).toFixed(1)} kHz` : `${Math.round(hz)} Hz`;
-}
-
-function EffectSlider({
-  label,
-  value,
-  min,
-  max,
-  format,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  format: (v: number) => string;
-  onChange: (v: number) => void;
-}) {
-  const id = useId();
-  const pct = ((value - min) / (max - min)) * 100;
-
-  return (
-    <div className="grid grid-cols-[4.5rem_1fr_3.5rem] items-center gap-3">
-      <label htmlFor={id} className="text-caption text-ink-muted">
-        {label}
-      </label>
-      <input
-        id={id}
-        type="range"
-        min={min}
-        max={max}
-        step={(max - min) / 100}
-        value={value}
-        aria-valuetext={format(value)}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        className="slider-input w-full"
-        style={
-          {
-            "--slider-pct": `${pct}%`,
-            "--slider-color": "var(--color-cyan-ink)",
-          } as React.CSSProperties
-        }
-      />
-      <output htmlFor={id} className="text-right text-caption tabular-nums text-ink-muted">
-        {format(value)}
-      </output>
-    </div>
-  );
 }

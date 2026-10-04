@@ -40,7 +40,12 @@ export class EffectsChain {
 
     this.dry = ctx.createGain();
     this.delay = ctx.createDelay(2.0);
+    // A new delay sits at 0 s and a new gain at 1, which makes the loop a
+    // repeat that never fades. It fills up unheard until echo is turned on,
+    // then screams, so the loop starts silent and only runs while echo plays.
+    this.delay.delayTime.value = 0.3;
     this.feedback = ctx.createGain();
+    this.feedback.gain.value = 0;
     this.echoWet = ctx.createGain();
     this.echoWet.gain.value = 0;
     this.convolver = ctx.createConvolver();
@@ -65,30 +70,31 @@ export class EffectsChain {
   /** Ramps every node to match the settings. Cheap enough to call on every
    *  slider move; the reverb tail is only rebuilt when its size changes. */
   apply(s: EffectsSettings): void {
-    const at = this.ctx.currentTime + RAMP;
     const active = s.on ? s.effect : null;
+    const ramp = (param: AudioParam, value: number) => glide(this.ctx, param, value, false);
 
     const echoMix = active === "echo" ? s.echo.wet : 0;
     const reverbMix = active === "reverb" ? s.reverb.wet : 0;
     // Wet effects duck the dry signal a little so the mix doesn't get louder.
-    this.dry.gain.linearRampToValueAtTime(1 - (echoMix + reverbMix) * 0.5, at);
+    ramp(this.dry.gain, 1 - (echoMix + reverbMix) * 0.5);
 
-    this.delay.delayTime.linearRampToValueAtTime(s.echo.delayTime, at);
-    // Below 1, or the repeats never die away.
-    this.feedback.gain.linearRampToValueAtTime(Math.min(s.echo.feedback, 0.85), at);
-    this.echoWet.gain.linearRampToValueAtTime(echoMix, at);
+    ramp(this.delay.delayTime, s.echo.delayTime);
+    // Below 1, or the repeats never die away. Off while echo isn't playing,
+    // so turning it on starts clean rather than with old repeats.
+    ramp(this.feedback.gain, active === "echo" ? Math.min(s.echo.feedback, 0.85) : 0);
+    ramp(this.echoWet.gain, echoMix);
 
     if (s.reverb.size !== this.reverbSize) {
       this.reverbSize = s.reverb.size;
       this.convolver.buffer = impulse(this.ctx, s.reverb.size);
     }
-    this.reverbWet.gain.linearRampToValueAtTime(reverbMix, at);
+    ramp(this.reverbWet.gain, reverbMix);
 
     const filtering = active === "filter";
     // Cutoff 0–1 maps 200 Hz–20 kHz on a log scale, as the ear hears pitch.
     const hz = filtering ? Math.min(OPEN_HZ, 200 * Math.pow(100, s.filter.cutoff)) : OPEN_HZ;
-    this.filter.frequency.exponentialRampToValueAtTime(hz, at);
-    this.filter.Q.linearRampToValueAtTime(filtering ? s.filter.resonance : 0.7, at);
+    glide(this.ctx, this.filter.frequency, hz, true);
+    ramp(this.filter.Q, filtering ? s.filter.resonance : 0.7);
   }
 
   dispose(): void {
@@ -104,6 +110,17 @@ export class EffectsChain {
       node.disconnect();
     }
   }
+}
+
+/** Ramps from wherever the param is now. A ramp with nothing scheduled before
+ *  it starts from the last event instead, which can be long past, so it
+ *  jumps rather than glides. */
+function glide(ctx: AudioContext, param: AudioParam, value: number, exponential: boolean) {
+  const now = ctx.currentTime;
+  param.cancelScheduledValues(now);
+  param.setValueAtTime(param.value, now);
+  if (exponential) param.exponentialRampToValueAtTime(value, now + RAMP);
+  else param.linearRampToValueAtTime(value, now + RAMP);
 }
 
 /** A room's echo, faked: stereo noise dying away over `seconds`. */

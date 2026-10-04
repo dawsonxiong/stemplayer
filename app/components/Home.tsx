@@ -33,6 +33,9 @@ import {
   UserFacingError,
 } from "~/lib/api";
 
+/** Shortest time the "Get song" step stays lit. */
+const MIN_LOOKUP_MS = 1000;
+
 // Said in the product's voice: what happened, then what to do.
 const EXPIRED_ERROR = "That song has expired. Drop it again to split it.";
 const OPEN_ERROR = "That song didn’t load. Check your connection.";
@@ -157,7 +160,12 @@ export function Home() {
           }
         } else {
           store.setStatus("processing");
-          const ticket = await requestLinkTask(input.url);
+          // The lookup is usually instant, which flashed the step past unread.
+          // Hold it long enough to see; a slow lookup isn't held any longer.
+          const [ticket] = await Promise.all([
+            requestLinkTask(input.url),
+            new Promise((r) => setTimeout(r, MIN_LOOKUP_MS)),
+          ]);
           taskId = ticket.taskId;
           store.setTaskId(taskId);
           if (!("cached" in ticket)) {
@@ -330,7 +338,7 @@ export function Home() {
                 Split any song into vocals, drums, bass and everything else.
               </h2>
               <p className="text-body text-pretty text-ink-muted">
-                Then mix them live by dragging the four lit grooves on the device.
+                Then mix them live by dragging the four grooves on the stem player.
               </p>
             </div>
           )}
@@ -354,7 +362,7 @@ export function Home() {
           <ProcessingSteps />
 
           {status === "ready" && (
-            <div className="panel-in flex flex-wrap items-center justify-center gap-x-8 gap-y-3 lg:justify-start">
+            <div className="panel-in flex w-full flex-col gap-3 rounded-panel border border-line bg-raised p-4">
               <MasterVolume audioEngine={audioEngine} />
               <SpeedControl audioEngine={audioEngine} />
             </div>

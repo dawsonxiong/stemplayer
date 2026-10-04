@@ -148,66 +148,62 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
         className="hidden"
         onChange={handleChange}
       />
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
-        <button
-          type="button"
-          className={`btn-primary cursor-pointer ${isDragOver ? "bg-cyan-ink" : ""}`}
-          onClick={() => inputRef.current?.click()}
-          aria-describedby={error ? errorId : undefined}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.75"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
-          {isDragOver ? "Drop to split it" : "Choose a song"}
-        </button>
-        {/* Touch screens have no files to drag in. */}
-        <span aria-hidden="true" className="hidden text-body text-ink-muted pointer-fine:inline">
-          {isDragOver ? "anywhere on the page" : "or drop one anywhere"}
-        </span>
-      </div>
-
-      <form
-        className="link-field flex w-full max-w-sm items-center rounded-full border border-line pl-4 transition-colors focus-within:border-line-strong"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (link.trim()) submitLink(link.trim());
-        }}
+      <button
+        type="button"
+        className={`btn-primary cursor-pointer ${isDragOver ? "bg-cyan-ink" : ""}`}
+        onClick={() => inputRef.current?.click()}
+        aria-describedby={error ? errorId : undefined}
       >
-        <input
-          type="text"
-          inputMode="url"
-          autoComplete="off"
-          autoCapitalize="off"
-          spellCheck={false}
-          value={link}
-          onChange={(e) => setLink(e.target.value)}
-          placeholder="or paste a song link"
-          aria-label="Song link from YouTube, SoundCloud, Spotify or Apple Music"
-          aria-describedby={error ? errorId : undefined}
-          className="min-w-0 flex-1 bg-transparent py-2.5 text-body text-ink placeholder:text-ink-muted"
-        />
-        <button
-          type="submit"
-          className="shrink-0 cursor-pointer rounded-full px-4 py-2.5 text-body text-ink transition-colors hover:bg-raised"
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          Split
-        </button>
-      </form>
-      <p aria-hidden="true" className="-mt-1 px-4 text-caption text-ink-muted">
-        YouTube, SoundCloud, Spotify or Apple Music
-      </p>
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+        {isDragOver ? "Drop to split it" : "Choose a song"}
+      </button>
+
+      <div className="flex w-full flex-col gap-1.5">
+        <form
+          className="link-field flex w-full items-center rounded-full border border-line pl-4 transition-colors focus-within:border-line-strong"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (link.trim()) submitLink(link.trim());
+          }}
+        >
+          <input
+            type="text"
+            inputMode="url"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            placeholder="or paste a song link"
+            aria-label="Song link from YouTube, SoundCloud, Spotify or Apple Music"
+            aria-describedby={error ? errorId : undefined}
+            className="min-w-0 flex-1 bg-transparent py-2.5 text-body text-ink placeholder:text-ink-muted"
+          />
+          <button
+            type="submit"
+            className="shrink-0 cursor-pointer rounded-full px-4 py-2.5 text-body text-ink transition-colors hover:bg-raised"
+          >
+            Split
+          </button>
+        </form>
+        <p aria-hidden="true" className="text-center text-caption text-ink-muted lg:text-left">
+          YouTube, SoundCloud, Spotify or Apple Music
+        </p>
+      </div>
 
       {error && (
         <p

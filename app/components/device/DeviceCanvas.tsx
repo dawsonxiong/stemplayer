@@ -11,6 +11,10 @@ useGLTF.preload(MODEL_URL);
 
 // Device half-height after the asset pipeline centres it on the origin.
 const HALF_H = 0.472;
+// Body radius, measured off the mesh.
+const DEVICE_RADIUS = 0.997;
+const FOV = 28;
+const MAX_DISTANCE = 7;
 
 // The shader derives an arm index from atan(x, z): 0 = -Z, 1 = -X, 2 = +Z,
 // 3 = +X. This maps each of those grooves to a stem.
@@ -283,7 +287,7 @@ export default function DeviceCanvas({
       }}
     >
       <Canvas
-        camera={{ position: [0, 3.35, 2.9], fov: 28 }}
+        camera={{ position: [0, 3.35, 2.9], fov: FOV }}
         dpr={[1, 2]}
         // No shadow map: the ground shadow is <ContactShadows>, and self-
         // shadowing only added acne lines along the groove lips (plus a 2048²
@@ -332,13 +336,13 @@ export default function DeviceCanvas({
         <GroundShadow />
         <ReadySignal onReady={onReady} />
         <ExtendedFrame />
+        <FitZoom />
 
         <OrbitControls
           makeDefault
           enablePan={false}
+          // Zoom limits are set by <FitZoom>, which sizes them to the frame.
           enableZoom
-          minDistance={2.0}
-          maxDistance={7.0}
           minPolarAngle={0.1}
           maxPolarAngle={Math.PI - 0.1}
           autoRotate={!reduceMotion && !userOrbiting}
@@ -376,6 +380,62 @@ function ExtendedFrame() {
     camera.setViewOffset(size.width, frameHeight, 0, 0, size.width, size.height);
     camera.updateProjectionMatrix();
   }, [camera, size]);
+
+  return null;
+}
+
+// The device's outline for fitting it in frame: its top and bottom rims.
+const RIM = Array.from({ length: 48 }, (_, i) => {
+  const a = (i % 24) * ((Math.PI * 2) / 24);
+  const y = i < 24 ? HALF_H : -HALF_H;
+  return new THREE.Vector3(Math.cos(a) * DEVICE_RADIUS, y, Math.sin(a) * DEVICE_RADIUS);
+});
+// How far into the canvas the rim may reach, in clip space. Top and bottom
+// stop short of the soft fades along those edges.
+const FIT_X = 0.94;
+const FIT_TOP = 0.84;
+const FIT_BOTTOM = -0.4;
+
+/** Stops zoom where the device would run past the edge of the frame, so it is
+ *  never cut off. Worked out from the current angle each frame, since a puck
+ *  seen from above needs far more room than one seen side-on. The controls
+ *  clamp every frame, so this also eases the view back when it won't fit. */
+function FitZoom() {
+  const controls = useThree((s) => s.controls) as {
+    minDistance: number;
+    maxDistance: number;
+    target: THREE.Vector3;
+  } | null;
+  const probe = useMemo(() => new THREE.PerspectiveCamera(), []);
+  const point = useMemo(() => new THREE.Vector3(), []);
+  const dir = useMemo(() => new THREE.Vector3(), []);
+
+  useFrame(({ camera }) => {
+    if (!controls) return;
+    probe.projectionMatrix.copy(camera.projectionMatrix);
+    dir.copy(camera.position).sub(controls.target).normalize();
+
+    const fits = (distance: number) => {
+      probe.position.copy(controls.target).addScaledVector(dir, distance);
+      probe.lookAt(controls.target);
+      probe.updateMatrixWorld();
+      return RIM.every((p) => {
+        point.copy(p).project(probe);
+        return Math.abs(point.x) <= FIT_X && point.y <= FIT_TOP && point.y >= FIT_BOTTOM;
+      });
+    };
+
+    // Fit only ever shrinks as the camera backs off, so bisect for the edge.
+    let near = 1.5;
+    let far = 12;
+    for (let i = 0; i < 14; i++) {
+      const mid = (near + far) / 2;
+      if (fits(mid)) far = mid;
+      else near = mid;
+    }
+    controls.minDistance = far;
+    controls.maxDistance = Math.max(MAX_DISTANCE, far);
+  });
 
   return null;
 }

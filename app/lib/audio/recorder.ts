@@ -4,6 +4,9 @@ export class MixRecorder {
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
   private source: AudioNode;
+  /** Seconds captured before the current stretch, and when that stretch began. */
+  private recorded = 0;
+  private resumedAt = 0;
 
   constructor(ctx: AudioContext, source: AudioNode) {
     this.ctx = ctx;
@@ -27,6 +30,27 @@ export class MixRecorder {
     };
 
     this.recorder.start(100); // Collect data every 100ms
+    this.recorded = 0;
+    this.resumedAt = performance.now();
+  }
+
+  /** Playback paused: hold the take rather than fill it with silence. */
+  pause(): void {
+    if (this.recorder?.state !== "recording") return;
+    this.recorder.pause();
+    this.recorded += (performance.now() - this.resumedAt) / 1000;
+  }
+
+  resume(): void {
+    if (this.recorder?.state !== "paused") return;
+    this.recorder.resume();
+    this.resumedAt = performance.now();
+  }
+
+  /** Seconds in the take so far, pauses left out. */
+  get elapsed(): number {
+    const running = this.recorder?.state === "recording";
+    return this.recorded + (running ? (performance.now() - this.resumedAt) / 1000 : 0);
   }
 
   stop(): Promise<Blob> {
@@ -56,7 +80,7 @@ export class MixRecorder {
   }
 
   get isRecording(): boolean {
-    return this.recorder?.state === "recording";
+    return this.recorder != null && this.recorder.state !== "inactive";
   }
 
   private getSupportedMimeType(): string {
