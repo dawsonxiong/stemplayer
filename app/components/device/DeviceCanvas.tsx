@@ -6,15 +6,20 @@ import * as THREE from "three";
 import { LED_PALETTE, type DeviceColor, type StemName } from "~/lib/constants";
 import { usePlayerStore } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
+import { SCENE_CEILING, SCENE_FLOOR, SCENE_HEIGHT } from "./frame";
 
 useGLTF.preload(MODEL_URL);
 
 // Device half-height after the asset pipeline centres it on the origin.
 const HALF_H = 0.472;
-// Body radius, measured off the mesh.
-const DEVICE_RADIUS = 0.997;
 const FOV = 28;
+const CAMERA_START: [number, number, number] = [0, 3.35, 2.9];
 const MAX_DISTANCE = 7;
+const START_DISTANCE = Math.hypot(...CAMERA_START);
+// Zooming in stops short of filling the frame, and never comes closer than
+// this to the device: any nearer and it just fills the page.
+const MIN_DISTANCE = START_DISTANCE * 0.85;
+const ZOOM_HEADROOM = 1.25;
 
 // The shader derives an arm index from atan(x, z): 0 = -Z, 1 = -X, 2 = +Z,
 // 3 = +X. This maps each of those grooves to a stem.
@@ -219,8 +224,6 @@ function zoneAt(p: THREE.Vector3): Zone | null {
 // covers the ground shadow and never the device itself. <ExtendedFrame> keeps
 // the camera framed on the original box, so the device doesn't move.
 const EXTEND = 0.35;
-// Set in app.css, so the page layout can size the scene per breakpoint.
-const SCENE_HEIGHT = "var(--scene-height)";
 
 /** Eased fade between two points of the canvas height, as mask stops. A
  *  linear ramp has an abrupt start and end, and the eye reads both as faint
@@ -280,14 +283,15 @@ export default function DeviceCanvas({
     <div
       className="relative z-0 w-full"
       style={{
+        // Starts above the scene's box, so the box begins at the ceiling.
         height: `calc(${SCENE_HEIGHT} * ${1 + EXTEND})`,
-        marginBottom: `calc(${SCENE_HEIGHT} * ${-EXTEND})`,
+        marginTop: `calc(${SCENE_HEIGHT} * ${-SCENE_CEILING})`,
         maskImage: EDGE_FADE,
         WebkitMaskImage: EDGE_FADE,
       }}
     >
       <Canvas
-        camera={{ position: [0, 3.35, 2.9], fov: FOV }}
+        camera={{ position: CAMERA_START, fov: FOV }}
         dpr={[1, 2]}
         // No shadow map: the ground shadow is <ContactShadows>, and self-
         // shadowing only added acne lines along the groove lips (plus a 2048²
@@ -384,22 +388,38 @@ function ExtendedFrame() {
   return null;
 }
 
-// The device's outline for fitting it in frame: its top and bottom rims.
-const RIM = Array.from({ length: 48 }, (_, i) => {
-  const a = (i % 24) * ((Math.PI * 2) / 24);
-  const y = i < 24 ? HALF_H : -HALF_H;
-  return new THREE.Vector3(Math.cos(a) * DEVICE_RADIUS, y, Math.sin(a) * DEVICE_RADIUS);
-});
-// How far into the canvas the rim may reach, in clip space. Top and bottom
-// stop short of the soft fades along those edges.
+// The device's outline for fitting it in frame: its widest radius at a few
+// heights, measured off the mesh. It's a pebble, so a plain cylinder would
+// claim room under the rounded edges that the device never fills.
+const PROFILE: [y: number, r: number][] = [
+  [0, 0.997],
+  [0.142, 0.976],
+  [0.236, 0.912],
+  [0.33, 0.791],
+  [0.425, 0.555],
+  [HALF_H, 0.3],
+];
+const RIM = PROFILE.flatMap(([y, r]) =>
+  (y === 0 ? [0] : [y, -y]).flatMap((height) =>
+    Array.from({ length: 16 }, (_, i) => {
+      const a = (i * Math.PI) / 8;
+      return new THREE.Vector3(Math.cos(a) * r, height, Math.sin(a) * r);
+    }),
+  ),
+);
+// How far into the canvas the rim may reach, in clip space: the sides short
+// of the edge, top and bottom at the scene's ceiling and floor.
 const FIT_X = 0.94;
-const FIT_TOP = 0.84;
-const FIT_BOTTOM = -0.4;
+const FIT_TOP = 1 - (2 * SCENE_CEILING) / (1 + EXTEND);
+const FIT_BOTTOM = 1 - (2 * SCENE_FLOOR) / (1 + EXTEND);
 
 /** Stops zoom where the device would run past the edge of the frame, so it is
  *  never cut off. Worked out from the current angle each frame, since a puck
- *  seen from above needs far more room than one seen side-on. The controls
- *  clamp every frame, so this also eases the view back when it won't fit. */
+ *  seen from above needs far more room than one seen side-on.
+ *
+ *  An angle that needs more room pushes the camera back. The distance the
+ *  viewer chose is remembered, so turning back to a roomier angle brings the
+ *  camera in again rather than leaving the device small. */
 function FitZoom() {
   const controls = useThree((s) => s.controls) as {
     minDistance: number;
@@ -409,9 +429,19 @@ function FitZoom() {
   const probe = useMemo(() => new THREE.PerspectiveCamera(), []);
   const point = useMemo(() => new THREE.Vector3(), []);
   const dir = useMemo(() => new THREE.Vector3(), []);
+  // The viewer's own distance, and the limit as of the last frame.
+  const wanted = useRef(START_DISTANCE);
+  const lastMin = useRef(0);
 
+  // After the controls' own update (drei runs it at priority -1), so the
+  // distance read here is what they settled on this frame.
   useFrame(({ camera }) => {
     if (!controls) return;
+    const distance = camera.position.distanceTo(controls.target);
+    // Held at the limit means the frame chose this distance, not the viewer.
+    // Anywhere else, the viewer's wheel or pinch put it there.
+    if (Math.abs(distance - lastMin.current) > 1e-3) wanted.current = distance;
+
     probe.projectionMatrix.copy(camera.projectionMatrix);
     dir.copy(camera.position).sub(controls.target).normalize();
 
@@ -433,8 +463,20 @@ function FitZoom() {
       if (fits(mid)) far = mid;
       else near = mid;
     }
-    controls.minDistance = far;
-    controls.maxDistance = Math.max(MAX_DISTANCE, far);
+    // The headroom stops at the starting distance, so it never pushes the
+    // resting view back; the frame alone does that, when it must.
+    const roomy = Math.min(far * ZOOM_HEADROOM, START_DISTANCE);
+    const min = Math.max(far, roomy, MIN_DISTANCE);
+    controls.minDistance = min;
+    controls.maxDistance = Math.max(MAX_DISTANCE, min);
+    lastMin.current = min;
+
+    // Back to the viewer's distance, or as near it as this angle allows.
+    const settle = Math.max(wanted.current, min);
+    if (Math.abs(distance - settle) > 1e-4) {
+      camera.position.sub(controls.target).setLength(settle).add(controls.target);
+      if (settle === min) lastMin.current = settle;
+    }
   });
 
   return null;

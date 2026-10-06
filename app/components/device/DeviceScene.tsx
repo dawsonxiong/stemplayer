@@ -2,6 +2,7 @@ import { Component, Suspense, lazy, useEffect, useState, type ReactNode } from "
 import { DEVICE_COLORS, LED_PALETTE, type StemName } from "~/lib/constants";
 import { usePlayerStore } from "~/lib/store";
 import { DeviceLoader } from "./DeviceLoader";
+import { SCENE_CEILING, SCENE_FLOOR, SCENE_HEIGHT } from "./frame";
 
 const DeviceCanvas = lazy(() => import("./DeviceCanvas"));
 
@@ -15,8 +16,6 @@ interface DeviceSceneProps {
   onHoldStem: (stem: StemName, held: boolean) => void;
 }
 
-// Set in app.css, so the page layout can size the scene per breakpoint.
-const SCENE_HEIGHT = "var(--scene-height)";
 
 // Grooves clockwise from the top, matching the 3D model's arm order.
 const GROOVES: { stem: StemName; rotate: number }[] = [
@@ -124,7 +123,7 @@ export function DeviceScene({
   if (contextLost) return <FlatDevice volumes={volumes} note={NO_3D_NOTE} />;
 
   return (
-    <div className="relative w-full" style={{ height: SCENE_HEIGHT }}>
+    <div className="relative w-full" style={{ height: `calc(${SCENE_HEIGHT} * ${SCENE_FLOOR - SCENE_CEILING})` }}>
       {mounted && (
         <WebGLBoundary fallback={<OnMount run={() => setContextLost(true)} />}>
           <Suspense fallback={null}>

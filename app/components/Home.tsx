@@ -14,6 +14,7 @@ import { UploadZone } from "~/components/upload/UploadZone";
 import { ProcessingSteps } from "~/components/upload/ProcessingSteps";
 import { HistoryList } from "~/components/upload/HistoryList";
 import { useAudioEngine } from "~/hooks/useAudioEngine";
+import { LedDots } from "~/components/ui/LedDots";
 import { useKeyboardShortcuts } from "~/hooks/useKeyboardShortcuts";
 import { usePlayerStore, type Source, type Stage } from "~/lib/store";
 import { MODEL_URL } from "~/lib/model";
@@ -274,6 +275,8 @@ export function Home() {
   }, []);
 
   const busy = status === "uploading" || status === "processing";
+  // Reopening a split song is one quick load with no steps to show.
+  const reopening = busy && !uploadStage;
   const hasTrack = Boolean(trackTitle) && status !== "idle";
 
   return (
@@ -287,13 +290,16 @@ export function Home() {
       </header>
 
       {/* Stacked on phones; on wide screens the device takes the left and the
-          controls sit beside it, the pair centred in the window. */}
-      <div className="flex w-full flex-1 flex-col items-center lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-center lg:gap-16">
-        <div className="flex w-full flex-col items-center">
+          controls sit beside it, the pair centred in the window with their
+          tops level (the device's box starts at the device itself). */}
+      <div className="flex w-full flex-1 flex-col items-center lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:content-center lg:items-start lg:gap-16">
+        {/* The device's box starts at the device, so it needs its own air
+            below the wordmark when stacked. */}
+        <div className="mt-12 flex w-full flex-col items-center lg:mt-0">
           <Device audioEngine={audioEngine} />
           {/* Under the device it recolours, out of the way while the steps show. */}
           {!busy && (
-            <div className="panel-in relative z-10 mt-5">
+            <div className="panel-in relative z-10 mt-8">
               <ColorPicker />
             </div>
           )}
@@ -326,21 +332,20 @@ export function Home() {
                   )}
                 </>
               ) : (
-                // An upload's steps say what's happening; a reopened song has none.
-                busy && !uploadStage && <p className="text-caption text-ink-muted">Loading</p>
+                // An upload's steps say what's happening; a reopened song has
+                // none, so it gets the device's loading mark instead.
+                reopening && <LoadingStems className="mt-2.5" />
               )}
             </div>
+          ) : reopening ? (
+            // A song opened from its link: no title until the stems arrive.
+            <LoadingStems />
           ) : busy ? (
             <p className="text-center text-body text-ink-muted lg:text-left">Loading your song</p>
           ) : (
-            <div className="flex flex-col gap-3 text-center lg:text-left">
-              <h2 className="text-display text-balance text-ink">
-                Split any song into vocals, drums, bass and everything else.
-              </h2>
-              <p className="text-body text-pretty text-ink-muted">
-                Then mix them live by dragging the four grooves on the stem player.
-              </p>
-            </div>
+            <h2 className="text-center text-display text-balance text-ink lg:text-left">
+              Split any song into vocals, drums, bass and everything else.
+            </h2>
           )}
 
           {status === "ready" && !isOn && (
@@ -376,16 +381,31 @@ export function Home() {
               >
                 {errorMessage}
               </p>
-              {canRetry && (
-                <button type="button" onClick={() => retry.current?.()} className="btn-secondary">
-                  Try again
+              {/* A failure is a fork: run it again, or go back for another
+                  song. The form and history wait behind the second. */}
+              <div className="flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+                {canRetry && (
+                  <button
+                    type="button"
+                    onClick={() => retry.current?.()}
+                    className="btn-primary px-6"
+                  >
+                    Try again
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleNewTrack}
+                  className={canRetry ? "btn-secondary" : "btn-primary px-6"}
+                >
+                  Choose another song
                 </button>
-              )}
+              </div>
             </div>
           )}
 
           <UploadZone onFileSelected={handleFileSelected} onLinkSubmitted={handleLinkSubmitted} />
-          {(status === "idle" || status === "error") && (
+          {status === "idle" && (
             <HistoryList onOpen={(entry) => void openTrack(entry.taskId, entry.title)} />
           )}
 
@@ -400,5 +420,15 @@ export function Home() {
         </div>
       </div>
     </main>
+  );
+}
+
+/** A reopened song's one quick load, in the device loader's LED dots. */
+function LoadingStems({ className = "" }: { className?: string }) {
+  return (
+    <p role="status" className={`flex items-center gap-3 text-caption text-ink-muted ${className}`}>
+      <LedDots />
+      Loading stems
+    </p>
   );
 }

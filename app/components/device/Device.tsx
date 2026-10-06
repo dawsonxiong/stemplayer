@@ -92,7 +92,7 @@ export function Device({ audioEngine }: DeviceProps) {
   }, [audioEngine]);
 
   return (
-    <div className="flex w-full flex-col items-center gap-5">
+    <div className="flex w-full flex-col items-center gap-8">
       <DeviceScene
         volumes={audibleLevels(volumes, isolated)}
         amplitudes={amplitudes}

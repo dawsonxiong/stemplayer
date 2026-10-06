@@ -65,6 +65,10 @@ export async function POST(request: Request) {
   });
 
   if (!modalResponse.ok) {
+    // Modal's reason, for the logs: a bad secret (401), a refused input (400)
+    // and Modal itself timing out (408) all look the same to the person.
+    const reason = (await modalResponse.text().catch(() => "")).slice(0, 300);
+    console.error(`Modal refused ${taskId}: ${modalResponse.status} ${reason}`);
     await env.JOBS.put(
       taskId,
       JSON.stringify({
