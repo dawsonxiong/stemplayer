@@ -1,5 +1,6 @@
 import hmac
 import modal
+import modal.experimental
 import os
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -271,9 +272,16 @@ def _run_demucs(model, input_path: str) -> dict:
     ref = wav.mean(0)
     mean, std = ref.mean(), ref.std()
     device = next(model.parameters()).device
-    sources = apply_model(
-        model, ((wav - mean) / std)[None].to(device), shifts=1, split=True, overlap=0.25
-    )[0].cpu() * std + mean
+    try:
+        sources = apply_model(
+            model, ((wav - mean) / std)[None].to(device), shifts=1, split=True, overlap=0.25
+        )[0].cpu() * std + mean
+    except Exception:
+        # A GPU error can leave CUDA unusable for the rest of the process, and
+        # the model stays loaded for later songs. So this container finishes
+        # this song and takes no more, and the next song gets a fresh one.
+        modal.experimental.stop_fetching_inputs()
+        raise
     return dict(zip(model.sources, sources))
 
 
