@@ -92,10 +92,11 @@ export function ProcessingSteps() {
           const state: StepState =
             i < current ? "done" : i > current ? "pending" : failed ? "failed" : "active";
           // Done steps need nothing; the upload counts up its own progress.
+          // After a failure the rest won't run, so they get no estimate.
           const detail =
             state === "failed"
               ? "Failed"
-              : state === "done"
+              : state === "done" || failed
                 ? null
                 : state === "active" && step.id === "upload"
                   ? `${Math.round(progress)}%`

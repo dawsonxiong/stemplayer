@@ -14,7 +14,7 @@ export function PowerButton({ audioEngine }: { audioEngine: AudioEngine | null }
       onClick={() => setPower(audioEngine, !isOn)}
       aria-label={label}
       title={`${label} (P)`}
-      className="btn-secondary self-stretch px-3.5"
+      className="btn-secondary btn-secondary-icon"
     >
       <svg
         width="16"

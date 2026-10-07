@@ -27,7 +27,7 @@ export function KeyboardShortcuts() {
         aria-controls={listId}
         aria-label="Keyboard shortcuts"
         title="Keyboard shortcuts"
-        className="btn-secondary hidden self-stretch px-3.5 aria-expanded:bg-raised pointer-fine:inline-flex"
+        className="btn-secondary btn-secondary-icon hidden aria-expanded:bg-raised pointer-fine:inline-flex"
       >
         <svg
           width="16"

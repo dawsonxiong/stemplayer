@@ -39,6 +39,7 @@ export function RecordButton({ audioEngine }: RecordButtonProps) {
   }, [audioEngine, isRecording, setRecording, trackTitle]);
 
   const label = isRecording ? "Stop recording and save mix" : "Record mix";
+  const elapsed = formatTime(audioEngine?.recorder?.elapsed ?? 0);
 
   return (
     <button
@@ -46,8 +47,9 @@ export function RecordButton({ audioEngine }: RecordButtonProps) {
       onClick={toggle}
       disabled={!isOn && !isRecording}
       className={`btn-icon ${isRecording ? "w-auto gap-1.5 border-record px-3" : ""}`}
-      // A fixed name with a pressed state: "Record mix, pressed" while it runs.
-      aria-label="Record mix"
+      // A steady name with a pressed state, plus the time shown on the button
+      // so what's heard matches what's seen: "Record mix, 0:12, pressed".
+      aria-label={isRecording ? `Record mix, ${elapsed}` : "Record mix"}
       aria-pressed={isRecording}
       title={label}
     >
@@ -56,9 +58,7 @@ export function RecordButton({ audioEngine }: RecordButtonProps) {
           <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
             <rect x="2" y="2" width="10" height="10" rx="1.5" fill="var(--color-record)" />
           </svg>
-          <span className="text-caption tabular-nums text-ink">
-            {formatTime(audioEngine?.recorder?.elapsed ?? 0)}
-          </span>
+          <span className="text-caption tabular-nums text-ink">{elapsed}</span>
         </>
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">

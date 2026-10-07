@@ -79,9 +79,12 @@
   transition-property: background-color, scale;
   transition-duration: 150ms;
   /* :where() keeps hover at a single class's weight, so a colour class set
-     alongside (the drag-over cyan) still wins. */
-  &:where(:hover:not(:disabled)) {
-    background-color: color-mix(in oklab, var(--color-ink), black 22%);
+     alongside (the drag-over cyan) still wins. Only where a pointer can
+     hover, as Tailwind's hover: does, or a tapped button stays dark. */
+  @media (hover: hover) {
+    &:where(:hover:not(:disabled)) {
+      background-color: color-mix(in oklab, var(--color-ink), black 22%);
+    }
   }
   &:active {
     scale: 0.98;
@@ -99,8 +102,10 @@
   line-height: var(--text-body--line-height);
   transition-property: background-color, scale;
   transition-duration: 150ms;
-  &:hover {
-    background-color: var(--color-raised);
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--color-raised);
+    }
   }
   &:active {
     scale: 0.98;
@@ -121,8 +126,10 @@
   transition-duration: 150ms;
   /* Low weight, so an active button's colour class (loop cyan, record red)
      keeps its border under the pointer. */
-  &:where(:hover:not(:disabled)) {
-    border-color: var(--color-line-strong);
+  @media (hover: hover) {
+    &:where(:hover:not(:disabled)) {
+      border-color: var(--color-line-strong);
+    }
   }
   &:active {
     scale: 0.95;
@@ -132,14 +139,22 @@
     opacity: 0.4;
   }
 }
+/* A square btn-secondary for an icon alone, as tall as the text buttons it
+   sits beside: power and keyboard shortcuts. */
+@utility btn-secondary-icon {
+  align-self: stretch;
+  padding-inline: 0.875rem;
+}
 /* Play: the control pressed most, so the one solid button in the transport. */
 @utility btn-icon-solid {
   border-color: var(--color-ink);
   background-color: var(--color-ink);
   color: var(--color-page);
-  &:where(:hover:not(:disabled)) {
-    border-color: color-mix(in oklab, var(--color-ink), black 22%);
-    background-color: color-mix(in oklab, var(--color-ink), black 22%);
+  @media (hover: hover) {
+    &:where(:hover:not(:disabled)) {
+      border-color: color-mix(in oklab, var(--color-ink), black 22%);
+      background-color: color-mix(in oklab, var(--color-ink), black 22%);
+    }
   }
 }
 
@@ -175,6 +190,16 @@ body::before {
 
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+/* The 3D device fills a phone's width, and OrbitControls sets touch-action:
+   none inline on the canvas's wrapper, so a swipe over it could never scroll
+   the page. Vertical swipes scroll instead and horizontal ones still turn the
+   device. !important is the only way past an inline style, and it doesn't
+   depend on when OrbitControls connects. */
+.device-touch div,
+.device-touch canvas {
+  touch-action: pan-y !important;
 }
 
 /* No double-tap zoom delay on controls, so quick taps on play, loop or an

@@ -281,7 +281,8 @@ export function Home() {
 
   // The song's title and details. On phones it sits above the device, so a
   // loaded song's name isn't pushed below the fold by the device and its
-  // sliders; on wide screens it heads the controls column.
+  // sliders; on wide screens it heads the controls column. One element,
+  // placed by the grid below.
   const trackHeading = hasTrack && (
     <div className="flex flex-col items-start gap-1.5">
       <p className="line-clamp-3 text-display text-balance wrap-break-word text-ink">
@@ -340,13 +341,23 @@ export function Home() {
 
       {/* Stacked on phones; on wide screens the device takes the left and the
           controls sit beside it, the pair centred in the window with their
-          tops level (the device's box starts at the device itself). */}
-      <div className="flex w-full flex-1 flex-col items-center lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:content-center lg:items-start lg:gap-16">
+          tops level (the device's box starts at the device itself). A song's
+          title comes first in the source, so on phones it sits above the
+          device; on wide screens the grid puts it at the head of the right
+          column, with the device spanning both rows. The second row flexes,
+          so the tall device can't open a gap under the title. */}
+      <div
+        className={`flex w-full flex-1 flex-col items-center lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:content-center lg:items-start lg:gap-x-16 lg:gap-y-5 ${trackHeading ? "lg:grid-rows-[auto_1fr]" : ""}`}
+      >
+        {trackHeading && (
+          <div className="relative z-10 mt-10 w-full max-w-sm lg:col-start-2 lg:row-start-1 lg:mt-0 lg:max-w-none">
+            {trackHeading}
+          </div>
+        )}
         {/* The device's box starts at the device, so it needs its own air
             below the wordmark when stacked. */}
-        {trackHeading && <div className="mt-10 w-full max-w-sm lg:hidden">{trackHeading}</div>}
         <div
-          className={`flex w-full flex-col items-center lg:mt-0 ${trackHeading ? "mt-4" : "mt-12"}`}
+          className={`flex w-full flex-col items-center lg:col-start-1 lg:row-start-1 lg:mt-0 ${trackHeading ? "mt-4 lg:row-span-2" : "mt-12"}`}
         >
           <Device audioEngine={audioEngine} />
           {/* Under the device it recolours, out of the way while the steps show. */}
@@ -363,11 +374,10 @@ export function Home() {
         <div
           id="controls"
           tabIndex={-1}
-          className="relative z-10 mt-8 flex w-full max-w-sm flex-col gap-5 outline-none lg:mt-0 lg:max-w-none"
+          className={`relative z-10 mt-8 flex w-full max-w-sm flex-col gap-5 outline-none lg:col-start-2 lg:mt-0 lg:max-w-none ${trackHeading ? "lg:row-start-2" : "lg:row-start-1"}`}
         >
-          {hasTrack ? (
-            <div className="hidden lg:block">{trackHeading}</div>
-          ) : reopening ? (
+          {/* With a song, its title heads the column from the grid above. */}
+          {hasTrack ? null : reopening ? (
             // A song opened from its link: no title until the stems arrive.
             <LoadingStems />
           ) : busy ? (

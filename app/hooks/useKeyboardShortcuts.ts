@@ -34,8 +34,13 @@ export function useKeyboardShortcuts(audioEngine: AudioEngine | null) {
       if (e.target instanceof HTMLButtonElement && (e.code === "Space" || e.key === "Enter"))
         return;
       // Cmd/Ctrl/Alt combinations belong to the browser and the OS: Cmd+L is
-      // the address bar, Cmd+1 a tab switch.
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // the address bar, Cmd+1 a tab switch, Alt+← back. The exception is
+      // [ and ], which many layouts can only type with Option (Mac) or AltGr
+      // (Windows reports it as Ctrl+Alt).
+      const typedWithAlt = e.key === "[" || e.key === "]";
+      if (e.metaKey) return;
+      if (e.ctrlKey && !e.altKey) return;
+      if (e.altKey && !typedWithAlt) return;
 
       const store = usePlayerStore.getState();
       if (store.status !== "ready") return;
