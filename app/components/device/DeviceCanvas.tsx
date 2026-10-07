@@ -445,8 +445,8 @@ function FitZoom() {
     probe.projectionMatrix.copy(camera.projectionMatrix);
     dir.copy(camera.position).sub(controls.target).normalize();
 
-    const fits = (distance: number) => {
-      probe.position.copy(controls.target).addScaledVector(dir, distance);
+    const fits = (at: number) => {
+      probe.position.copy(controls.target).addScaledVector(dir, at);
       probe.lookAt(controls.target);
       probe.updateMatrixWorld();
       return RIM.every((p) => {
@@ -814,7 +814,24 @@ function Device({
   const isOn = usePlayerStore((s) => s.isOn);
   const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
   const controls = useThree((s) => s.controls) as { enabled: boolean } | null;
+  const gl = useThree((s) => s.gl);
   const drag = useRef<DragState>(idle());
+
+  // OrbitControls sets touch-action: none, so on a phone, where the device
+  // fills the width, a swipe over it could never scroll the page. Vertical
+  // swipes scroll instead, horizontal ones still turn the device, and a touch
+  // that lands on a control cancels the scroll so grooves drag either way.
+  // Pointer events come before touch events, so handleDown has already
+  // claimed the touch by the time touchstart arrives.
+  useEffect(() => {
+    const el = gl.domElement;
+    el.style.touchAction = "pan-y";
+    const claim = (e: TouchEvent) => {
+      if (drag.current.mode !== "none") e.preventDefault();
+    };
+    el.addEventListener("touchstart", claim, { passive: false });
+    return () => el.removeEventListener("touchstart", claim);
+  }, [gl, controls]);
 
   // Power and isolate fire on a timer while still held, so the device reacts
   // under your finger instead of waiting for release.

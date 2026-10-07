@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { STEMS, type StemName } from "~/lib/constants";
-import { audibleLevels, setStemIsolated } from "~/lib/mix";
+import { audibleLevels, setPower, setStemIsolated } from "~/lib/mix";
 import { usePlayerStore } from "~/lib/store";
 import { useAnimationFrame } from "~/hooks/useAnimationFrame";
 import type { AudioEngine } from "~/lib/audio/engine";
@@ -80,16 +80,10 @@ export function Device({ audioEngine }: DeviceProps) {
     [audioEngine],
   );
 
-  const handleTogglePower = useCallback(() => {
-    const store = usePlayerStore.getState();
-    const next = !store.isOn;
-    store.setPower(next);
-    if (!next) {
-      // Powering off silences and stops, like pulling the plug.
-      audioEngine?.pause();
-      store.setPlaying(false);
-    }
-  }, [audioEngine]);
+  const handleTogglePower = useCallback(
+    () => setPower(audioEngine, !usePlayerStore.getState().isOn),
+    [audioEngine],
+  );
 
   return (
     <div className="flex w-full flex-col items-center gap-8">

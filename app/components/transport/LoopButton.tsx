@@ -19,8 +19,9 @@ export function LoopButton({ audioEngine }: LoopButtonProps) {
       onClick={() => cycleLoop(audioEngine)}
       // Dashed while waiting for the out point, solid once the loop is set.
       className={`btn-icon ${pending ? "border-dashed" : ""} ${active || pending ? "border-cyan-ink" : ""}`}
+      // The label already names the next action; "pressed" on top of it would
+      // read as "Clear loop, pressed".
       aria-label={label}
-      aria-pressed={active}
       title={`${label} (L)`}
     >
       <svg

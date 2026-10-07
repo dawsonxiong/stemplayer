@@ -46,7 +46,8 @@ export function RecordButton({ audioEngine }: RecordButtonProps) {
       onClick={toggle}
       disabled={!isOn && !isRecording}
       className={`btn-icon ${isRecording ? "w-auto gap-1.5 border-record px-3" : ""}`}
-      aria-label={label}
+      // A fixed name with a pressed state: "Record mix, pressed" while it runs.
+      aria-label="Record mix"
       aria-pressed={isRecording}
       title={label}
     >

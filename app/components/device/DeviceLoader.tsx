@@ -6,7 +6,7 @@ export function DeviceLoader() {
   return (
     <div role="status" className="flex h-full w-full flex-col items-center justify-center gap-3">
       <LedDots />
-      <span className="text-caption text-ink-muted">Loading</span>
+      <span className="text-caption text-ink-muted">Loading…</span>
     </div>
   );
 }

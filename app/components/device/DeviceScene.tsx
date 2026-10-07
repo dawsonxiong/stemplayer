@@ -16,7 +16,6 @@ interface DeviceSceneProps {
   onHoldStem: (stem: StemName, held: boolean) => void;
 }
 
-
 // Grooves clockwise from the top, matching the 3D model's arm order.
 const GROOVES: { stem: StemName; rotate: number }[] = [
   { stem: "bass", rotate: 0 },
@@ -59,10 +58,8 @@ function FlatDevice({ volumes, note }: { volumes: Record<StemName, number>; note
                   <span
                     key={colour}
                     className="h-2.5 w-2.5 rounded-full"
-                    style={{
-                      backgroundColor: i < lit ? colour : "var(--color-well)",
-                      boxShadow: i < lit ? `0 0 6px ${colour}` : undefined,
-                    }}
+                    // Flat fills, no glow, like every other LED dot on the page.
+                    style={{ backgroundColor: i < lit ? colour : "var(--color-well)" }}
                   />
                 ))}
               </div>
@@ -123,7 +120,10 @@ export function DeviceScene({
   if (contextLost) return <FlatDevice volumes={volumes} note={NO_3D_NOTE} />;
 
   return (
-    <div className="relative w-full" style={{ height: `calc(${SCENE_HEIGHT} * ${SCENE_FLOOR - SCENE_CEILING})` }}>
+    <div
+      className="relative w-full"
+      style={{ height: `calc(${SCENE_HEIGHT} * ${SCENE_FLOOR - SCENE_CEILING})` }}
+    >
       {mounted && (
         <WebGLBoundary fallback={<OnMount run={() => setContextLost(true)} />}>
           <Suspense fallback={null}>

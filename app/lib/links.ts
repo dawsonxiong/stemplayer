@@ -155,6 +155,6 @@ function parseSpotify(path: string[]): ParsedLink | null {
 }
 
 export const UNSUPPORTED_LINK =
-  "That link isn’t a song on YouTube, SoundCloud, Spotify or Apple Music.";
+  "That link isn’t a song on YouTube, SoundCloud, Spotify or Apple Music. Copy the link from the song’s own page, or choose a file instead.";
 export const COLLECTION_LINK =
   "That’s a link to an album or playlist. Open one song and copy its link.";

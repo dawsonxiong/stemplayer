@@ -23,7 +23,7 @@ export function HistoryList({ onOpen }: HistoryListProps) {
               onClick={() => onOpen(entry)}
               className="-mx-2 flex w-[calc(100%+1rem)] flex-col gap-0.5 rounded-row px-2 py-2.5 text-left transition-colors hover:bg-raised"
             >
-              <span className="line-clamp-2 text-body text-ink">{entry.title}</span>
+              <span className="line-clamp-2 text-body wrap-break-word text-ink">{entry.title}</span>
               <span className="text-caption text-ink-muted tabular-nums">
                 {trackDetails(entry.duration, entry.addedAt)}
               </span>
