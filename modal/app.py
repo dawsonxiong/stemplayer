@@ -250,45 +250,38 @@ def _find_on_youtube(artist: str, title: str, duration_ms: int) -> dict:
 STEMS = ("vocals", "drums", "bass", "other")
 
 
-def _separate_stems(model, input_path: str, out_dir: str, device: str) -> dict[str, str]:
-    """Split a song into its stems, encoded as 192 kbps MP3s. Returns each
-    stem's file path.
+def _run_demucs(model, input_path: str) -> dict:
+    """Split a song into its stems, on whichever device the model is on.
 
-    The same steps as `python -m demucs -n htdemucs --mp3 --mp3-bitrate 192`,
-    run in this process so the model is loaded once per container rather than
-    once per song."""
-    import torch
+    The same steps as `python -m demucs -n htdemucs`, run in this process so
+    the model is loaded once per container rather than once per song."""
+    import subprocess
+    import torchaudio
     from demucs.apply import apply_model
-    from demucs.audio import AudioFile, save_audio
+    from demucs.audio import AudioFile, convert_audio
 
-    wav = AudioFile(input_path).read(
-        streams=0, samplerate=model.samplerate, channels=model.audio_channels
-    )
-    ref = wav.mean(0)
-    wav = (wav - ref.mean()) / ref.std()
-    with torch.no_grad():
-        sources = apply_model(
-            model, wav[None].to(device), device=device, shifts=1, split=True, overlap=0.25
-        )[0]
-    sources = (sources * ref.std().to(device) + ref.mean().to(device)).cpu()
-
-    # LAME runs on one core, so the four stems encode side by side.
-    paths = {name: os.path.join(out_dir, f"{name}.mp3") for name in STEMS}
-    with ThreadPoolExecutor(len(STEMS)) as pool:
-        list(
-            pool.map(
-                lambda name: save_audio(
-                    sources[model.sources.index(name)],
-                    paths[name],
-                    samplerate=model.samplerate,
-                    bitrate=192,
-                    preset=2,
-                    clip="rescale",
-                ),
-                STEMS,
-            )
+    try:
+        wav = AudioFile(input_path).read(
+            streams=0, samplerate=model.samplerate, channels=model.audio_channels
         )
-    return paths
+    except subprocess.CalledProcessError:
+        # The CLI's fallback for what ffmpeg can't read.
+        wav, sr = torchaudio.load(input_path)
+        wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
+    ref = wav.mean(0)
+    mean, std = ref.mean(), ref.std()
+    device = next(model.parameters()).device
+    sources = apply_model(
+        model, ((wav - mean) / std)[None].to(device), shifts=1, split=True, overlap=0.25
+    )[0].cpu() * std + mean
+    return dict(zip(model.sources, sources))
+
+
+def _save_mp3(wav, path: str, samplerate: int) -> None:
+    """Encode a stem as `python -m demucs --mp3 --mp3-bitrate 192` does."""
+    from demucs.audio import save_audio
+
+    save_audio(wav, path, samplerate=samplerate, bitrate=192, preset=2, clip="rescale")
 
 
 @app.cls(
@@ -321,31 +314,18 @@ class Separator:
         self.model.to("cuda")
 
     @modal.method()
-    def separate(
-        self,
-        task_id: str,
-        webhook_url: str,
-        input_r2_key: str | None = None,
-        youtube_id: str | None = None,
-        soundcloud_id: str | None = None,
-        match: dict | None = None,
-    ):
+    def separate(self, task_id: str, webhook_url: str, **song):
         """Fetch the song, run Demucs, upload stems, report back via webhook.
 
-        The song is an upload in R2, a YouTube video, a SoundCloud track, or a
-        Spotify or Apple Music song (`match`) found on YouTube by artist, title
-        and length.
+        The song (`song`, one of `input_r2_key`, `youtube_id`, `soundcloud_id`
+        or `match`) is an upload in R2, a YouTube video, a SoundCloud track,
+        or a Spotify or Apple Music song found on YouTube by artist, title and
+        length.
 
         R2 credentials and the webhook secret come from Modal secrets, not the
         request body.
         """
-        return _separate(
-            self.model, task_id, webhook_url,
-            input_r2_key=input_r2_key,
-            youtube_id=youtube_id,
-            soundcloud_id=soundcloud_id,
-            match=match,
-        )
+        return _separate(self.model, task_id, webhook_url, **song)
 
 
 def _separate(
@@ -408,21 +388,23 @@ def _separate(
             input_sha256 = _sha256(input_path)
             progress(15)
 
-            stem_paths = _separate_stems(model, input_path, tmpdir, "cuda")
+            stems = _run_demucs(model, input_path)
             progress(80)
 
-            # Upload stems back to R2
             stem_keys = {name: f"stems/{task_id}/{name}.mp3" for name in STEMS}
-            with ThreadPoolExecutor(len(STEMS)) as pool:
-                list(
-                    pool.map(
-                        lambda name: s3.upload_file(
-                            stem_paths[name], bucket, stem_keys[name],
-                            ExtraArgs={"ContentType": "audio/mpeg"},
-                        ),
-                        STEMS,
-                    )
+
+            def encode_and_upload(name: str) -> None:
+                path = os.path.join(tmpdir, f"{name}.mp3")
+                _save_mp3(stems[name], path, model.samplerate)
+                s3.upload_file(
+                    path, bucket, stem_keys[name],
+                    ExtraArgs={"ContentType": "audio/mpeg"},
                 )
+
+            # LAME runs on one core, so the four stems encode side by side,
+            # each uploading as soon as it's done.
+            with ThreadPoolExecutor(len(STEMS)) as pool:
+                list(pool.map(encode_and_upload, STEMS))
 
             _report(
                 webhook_url,
