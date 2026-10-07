@@ -1,8 +1,9 @@
 import hmac
 import modal
+import modal.experimental
 import os
 import tempfile
-import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 app = modal.App("stem-demucs")
 
@@ -102,7 +103,6 @@ def _download(url: str, tmpdir: str) -> dict:
 
     opts = {
         "format": "bestaudio/best",
-        # Demucs names its output folder after the input's file stem.
         "outtmpl": os.path.join(tmpdir, "input_audio.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
@@ -248,15 +248,96 @@ def _find_on_youtube(artist: str, title: str, duration_ms: int) -> dict:
     return best
 
 
-@app.function(
+STEMS = ("vocals", "drums", "bass", "other")
+
+
+def _run_demucs(model, input_path: str) -> dict:
+    """Split a song into its stems, on whichever device the model is on.
+
+    The same steps as `python -m demucs -n htdemucs`, run in this process so
+    the model is loaded once per container rather than once per song."""
+    import subprocess
+    import torchaudio
+    from demucs.apply import apply_model
+    from demucs.audio import AudioFile, convert_audio
+
+    try:
+        wav = AudioFile(input_path).read(
+            streams=0, samplerate=model.samplerate, channels=model.audio_channels
+        )
+    except subprocess.CalledProcessError:
+        # The CLI's fallback for what ffmpeg can't read.
+        wav, sr = torchaudio.load(input_path)
+        wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
+    ref = wav.mean(0)
+    mean, std = ref.mean(), ref.std()
+    device = next(model.parameters()).device
+    try:
+        sources = apply_model(
+            model, ((wav - mean) / std)[None].to(device), shifts=1, split=True, overlap=0.25
+        )[0].cpu() * std + mean
+    except Exception:
+        # A GPU error can leave CUDA unusable for the rest of the process, and
+        # the model stays loaded for later songs. So this container finishes
+        # this song and takes no more, and the next song gets a fresh one.
+        modal.experimental.stop_fetching_inputs()
+        raise
+    return dict(zip(model.sources, sources))
+
+
+def _save_mp3(wav, path: str, samplerate: int) -> None:
+    """Encode a stem as `python -m demucs --mp3 --mp3-bitrate 192` does."""
+    from demucs.audio import save_audio
+
+    save_audio(wav, path, samplerate=samplerate, bitrate=192, preset=2, clip="rescale")
+
+
+@app.cls(
     image=demucs_image,
-    gpu="T4",
+    # About twice a T4's speed on Demucs, for about a third more per second.
+    gpu="L4",
+    # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
+    cpu=4.0,
     timeout=900,
     scaledown_window=300,
     memory=8192,
     secrets=[modal.Secret.from_name("r2-creds"), webhook_secret, apify_secret],
+    # A cold start restores torch and the loaded model from a snapshot
+    # instead of importing and loading them again.
+    enable_memory_snapshot=True,
 )
-def separate(
+class Separator:
+    @modal.enter(snap=True)
+    def load_model(self):
+        from demucs.pretrained import get_model
+
+        # No GPU while the snapshot is taken, so the model loads on the CPU.
+        self.model = get_model("htdemucs")
+        self.model.eval()
+
+    @modal.enter(snap=False)
+    def move_to_gpu(self):
+        # Kept on the GPU between songs. apply_model moves a model on the CPU
+        # over and back again on every call.
+        self.model.to("cuda")
+
+    @modal.method()
+    def separate(self, task_id: str, webhook_url: str, **song):
+        """Fetch the song, run Demucs, upload stems, report back via webhook.
+
+        The song (`song`, one of `input_r2_key`, `youtube_id`, `soundcloud_id`
+        or `match`) is an upload in R2, a YouTube video, a SoundCloud track,
+        or a Spotify or Apple Music song found on YouTube by artist, title and
+        length.
+
+        R2 credentials and the webhook secret come from Modal secrets, not the
+        request body.
+        """
+        return _separate(self.model, task_id, webhook_url, **song)
+
+
+def _separate(
+    model,
     task_id: str,
     webhook_url: str,
     input_r2_key: str | None = None,
@@ -264,15 +345,6 @@ def separate(
     soundcloud_id: str | None = None,
     match: dict | None = None,
 ):
-    """Fetch the song, run Demucs, upload stems, report back via webhook.
-
-    The song is an upload in R2, a YouTube video, a SoundCloud track, or a
-    Spotify or Apple Music song (`match`) found on YouTube by artist, title
-    and length.
-
-    R2 credentials and the webhook secret come from Modal secrets, not the
-    request body.
-    """
     import boto3
 
     def progress(pct: int):
@@ -293,7 +365,6 @@ def separate(
         bucket = os.environ["R2_BUCKET"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = os.path.join(tmpdir, "output")
             title = None
             matched = None
 
@@ -325,39 +396,23 @@ def separate(
             input_sha256 = _sha256(input_path)
             progress(15)
 
-            # Run Demucs (htdemucs base model — ~25s on T4 for a 4-min track)
-            result = subprocess.run(
-                [
-                    "python", "-m", "demucs",
-                    "-n", "htdemucs",
-                    "--mp3",
-                    "--mp3-bitrate", "192",
-                    "-o", output_dir,
-                    input_path,
-                ],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                raise RuntimeError(f"demucs failed: {result.stderr[-2000:]}")
-
+            stems = _run_demucs(model, input_path)
             progress(80)
 
-            # Upload stems back to R2
-            stems_dir = os.path.join(output_dir, "htdemucs", "input_audio")
-            stem_keys = {}
+            stem_keys = {name: f"stems/{task_id}/{name}.mp3" for name in STEMS}
 
-            for stem_name in ["vocals", "drums", "bass", "other"]:
-                local_path = os.path.join(stems_dir, f"{stem_name}.mp3")
-                if not os.path.exists(local_path):
-                    raise FileNotFoundError(f"Stem {stem_name}.mp3 not found")
-
-                r2_key = f"stems/{task_id}/{stem_name}.mp3"
+            def encode_and_upload(name: str) -> None:
+                path = os.path.join(tmpdir, f"{name}.mp3")
+                _save_mp3(stems[name], path, model.samplerate)
                 s3.upload_file(
-                    local_path, bucket, r2_key,
+                    path, bucket, stem_keys[name],
                     ExtraArgs={"ContentType": "audio/mpeg"},
                 )
-                stem_keys[stem_name] = r2_key
+
+            # LAME runs on one core, so the four stems encode side by side,
+            # each uploading as soon as it's done.
+            with ThreadPoolExecutor(len(STEMS)) as pool:
+                list(pool.map(encode_and_upload, STEMS))
 
             _report(
                 webhook_url,
@@ -468,7 +523,7 @@ def separate_api():
         if not _valid_input(given):
             raise HTTPException(status_code=400, detail="Invalid input")
 
-        separate.spawn(task_id, webhook_url, **given)
+        Separator().separate.spawn(task_id, webhook_url, **given)
         return {"task_id": item["task_id"], "status": "queued"}
 
     return web
