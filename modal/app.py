@@ -24,17 +24,29 @@ demucs_image = (
         "soundfile==0.14.0",
         "boto3==1.34.0",
         "requests==2.34.2",
-        # yt-dlp needs a JavaScript runtime to solve YouTube's challenges. The
-        # [default] extra brings the solver scripts, and deno, its default
-        # runtime, comes as a wheel with the binary on PATH.
-        "yt-dlp[default]==2026.8.19",
-        "deno==2.9.7",
     )
     # Pre-download model weights into the image
     .run_commands(
         "python -c \"from demucs.pretrained import get_model; get_model('htdemucs')\""
     )
     .add_local_python_source("stemsep")
+)
+
+# Fetching a link's song happens on its own, on the CPU, so a GPU starting
+# meanwhile doesn't wait for the download, and a warm one isn't paid to idle
+# through it.
+fetch_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("ffmpeg")
+    .pip_install(
+        "boto3==1.34.0",
+        "requests==2.34.2",
+        # yt-dlp needs a JavaScript runtime to solve YouTube's challenges. The
+        # [default] extra brings the solver scripts, and deno, its default
+        # runtime, comes as a wheel with the binary on PATH.
+        "yt-dlp[default]==2026.8.19",
+        "deno==2.9.7",
+    )
 )
 
 api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
@@ -367,29 +379,31 @@ class Separator:
         up, before the song it's for has finished uploading is the point."""
 
     @modal.method()
-    def separate(self, task_id: str, webhook_url: str, **song):
-        """Fetch the song, run Demucs, upload stems, report back via webhook.
+    def separate(
+        self, task_id: str, webhook_url: str, input_r2_key: str, link: dict | None = None
+    ):
+        """Fetch the song from R2, run Demucs, upload stems, report back via
+        webhook.
 
-        The song (`song`, one of `input_r2_key`, `youtube_id`, `soundcloud_id`
-        or `match`) is an upload in R2, a YouTube video, a SoundCloud track,
-        or a Spotify or Apple Music song found on YouTube by artist, title and
-        length.
+        The song is an upload, or a link's song that `fetch_song` put there,
+        in which case `link` has what it learned: the title, and for a
+        Spotify or Apple Music song the YouTube video it was found as.
 
         R2 credentials and the webhook secret come from Modal secrets, not the
         request body.
         """
-        return _separate(self.separator, task_id, webhook_url, warmup=self.warmup, **song)
+        return _separate(
+            self.separator, task_id, webhook_url, input_r2_key, link, warmup=self.warmup
+        )
 
 
 def _separate(
     separator,
     task_id: str,
     webhook_url: str,
+    input_r2_key: str,
+    link: dict | None = None,
     warmup=None,
-    input_r2_key: str | None = None,
-    youtube_id: str | None = None,
-    soundcloud_id: str | None = None,
-    match: dict | None = None,
 ):
     import boto3
     from stemsep.audio import StreamingMP3
@@ -430,40 +444,21 @@ def _separate(
         bucket = os.environ["R2_BUCKET"]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            title = None
-            matched = None
+            link = link or {}
+            title = link.get("title")
+            matched_id = link.get("matched_youtube_id")
 
-            progress(5)
-            if match:
-                matched = _find_on_youtube(
-                    match["artist"], match["title"], match["duration_ms"]
-                )
-                youtube_id = matched["id"]
-            if youtube_id:
-                url = f"https://www.youtube.com/watch?v={youtube_id}"
-            elif soundcloud_id:
-                url = f"https://api.soundcloud.com/tracks/{soundcloud_id}"
-            else:
-                url = None
-
+            # A link's job has already said so, from fetch_song.
+            if not link:
+                progress(5)
             with timed("fetch"):
-                if url:
-                    try:
-                        info = _download(url, tmpdir)
-                    except YouTubeBlocked:
-                        if not youtube_id:
-                            raise
-                        info = _download_via_apify(youtube_id, tmpdir)
-                    input_path = info["requested_downloads"][0]["filepath"]
-                    title = info.get("title")
-                else:
-                    input_path = os.path.join(tmpdir, "input_audio")
-                    s3.download_file(bucket, input_r2_key, input_path)
+                input_path = os.path.join(tmpdir, "input_audio")
+                s3.download_file(bucket, input_r2_key, input_path)
                 input_sha256 = _sha256(input_path)
             progress(15)
 
             with timed("decode"):
-                wav = _decode(separator, input_path, uploaded=not url)
+                wav = _decode(separator, input_path, uploaded=not link)
             # The stems encode to MP3 as they come off the GPU, one LAME per
             # stem on its own core, rather than all after it.
             encoder = StreamingMP3(STEMS, separator.samplerate, separator.audio_channels)
@@ -506,11 +501,8 @@ def _separate(
                         # shown so a wrong match is obvious, and cached so
                         # pasting that video reuses these stems.
                         **(
-                            {
-                                "matched_youtube_id": youtube_id,
-                                "matched_title": title,
-                            }
-                            if matched
+                            {"matched_youtube_id": matched_id, "matched_title": title}
+                            if matched_id
                             else {}
                         ),
                     },
@@ -521,24 +513,101 @@ def _separate(
 
     except Exception as e:
         reporter.shutdown(wait=True, cancel_futures=True)
-        _report(
-            webhook_url,
-            {
-                "task_id": task_id,
-                "status": "error",
-                "error": str(e.__cause__ or e),
-                **({"user_error": str(e)} if isinstance(e, UserError) else {}),
-                # Only a refusal might go differently next time; a song that's
-                # too long or age-restricted won't.
-                **({"retryable": True} if isinstance(e, YouTubeBlocked) else {}),
-            },
-        )
+        _report(webhook_url, _error_payload(task_id, e))
         return {"task_id": task_id, "status": "error", "error": str(e)}
 
     finally:
         # Modal's cancellation of an input isn't an Exception, so it skips the
         # handler above; don't leave its reports to mix with the next song's.
         reporter.shutdown(wait=False, cancel_futures=True)
+
+
+def _error_payload(task_id: str, e: Exception) -> dict:
+    return {
+        "task_id": task_id,
+        "status": "error",
+        "error": str(e.__cause__ or e),
+        **({"user_error": str(e)} if isinstance(e, UserError) else {}),
+        # Only a refusal might go differently next time; a song that's too
+        # long or age-restricted won't.
+        **({"retryable": True} if isinstance(e, YouTubeBlocked) else {}),
+    }
+
+
+@app.function(
+    image=fetch_image,
+    cpu=1.0,
+    memory=1024,
+    timeout=600,
+    # Near the bucket (ENAM): R2 transfers from Europe or Asia took twice as
+    # long. 1.15x on a CPU container is nothing.
+    region="us",
+    secrets=[modal.Secret.from_name("r2-creds"), webhook_secret, apify_secret],
+)
+def fetch_song(
+    task_id: str,
+    webhook_url: str,
+    youtube_id: str | None = None,
+    soundcloud_id: str | None = None,
+    match: dict | None = None,
+):
+    """Download a link's song into R2 and hand it to a GPU, which `/warm`
+    has been starting meanwhile.
+
+    The song is a YouTube video, a SoundCloud track, or a Spotify or Apple
+    Music song found on YouTube by artist, title and length."""
+    import boto3
+
+    started = time.perf_counter()
+    try:
+        _report(webhook_url, {"task_id": task_id, "status": "processing", "progress": 5})
+        matched = None
+        if match:
+            matched = _find_on_youtube(match["artist"], match["title"], match["duration_ms"])
+            youtube_id = matched["id"]
+        if youtube_id:
+            url = f"https://www.youtube.com/watch?v={youtube_id}"
+        else:
+            url = f"https://api.soundcloud.com/tracks/{soundcloud_id}"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                info = _download(url, tmpdir)
+            except YouTubeBlocked:
+                if not youtube_id:
+                    raise
+                info = _download_via_apify(youtube_id, tmpdir)
+            path = info["requested_downloads"][0]["filepath"]
+            downloaded = time.perf_counter()
+            # Kept with uploads, which the bucket clears after a day.
+            key = f"uploads/{task_id}/link{os.path.splitext(path)[1]}"
+            boto3.client(
+                "s3",
+                endpoint_url=os.environ["R2_ENDPOINT"],
+                aws_access_key_id=os.environ["R2_ACCESS_KEY"],
+                aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+                region_name="auto",
+            ).upload_file(path, os.environ["R2_BUCKET"], key)
+
+        title = info.get("title")
+        Separator().separate.spawn(
+            task_id,
+            webhook_url,
+            input_r2_key=key,
+            link={
+                **({"title": title} if title else {}),
+                **({"matched_youtube_id": youtube_id} if matched else {}),
+            },
+        )
+        timings = {
+            "download": round(downloaded - started, 3),
+            "store": round(time.perf_counter() - downloaded, 3),
+        }
+        print(json.dumps({"task_id": task_id, "timings": timings}))
+        return {"task_id": task_id, "status": "fetched", "timings": timings}
+    except Exception as e:
+        _report(webhook_url, _error_payload(task_id, e))
+        return {"task_id": task_id, "status": "error", "error": str(e)}
 
 
 def _valid_input(given: dict) -> bool:
@@ -582,8 +651,8 @@ def separate_api():
         "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook"
     }
 
-    Spawns the GPU job and returns immediately — the Worker must not block
-    for the full separation.
+    Spawns the job (for a link, the fetch that hands on to the GPU) and
+    returns immediately — the Worker must not block for the full separation.
     """
     import threading
 
@@ -642,7 +711,11 @@ def separate_api():
         if not _valid_input(given):
             raise HTTPException(status_code=400, detail="Invalid input")
 
-        Separator().separate.spawn(task_id, webhook_url, **given)
+        # A link's song is fetched on the CPU first; an upload is already in R2.
+        if "input_r2_key" in given:
+            Separator().separate.spawn(task_id, webhook_url, given["input_r2_key"])
+        else:
+            fetch_song.spawn(task_id, webhook_url, **given)
         return {"task_id": item["task_id"], "status": "queued"}
 
     return web
