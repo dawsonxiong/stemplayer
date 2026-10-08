@@ -307,11 +307,42 @@ def _decode(separator, input_path: str, uploaded: bool):
         raise
 
 
-def _run_demucs(separator, wav, sink=None) -> dict:
+def _prefetch(blocks):
+    """`blocks`, produced on a thread as fast as it can, so the next is
+    usually ready when it's asked for. An exception reaches the reader."""
+    import queue
+    import threading
+
+    q = queue.Queue()
+    end = object()
+
+    def produce():
+        try:
+            for block in blocks:
+                q.put(block)
+            q.put(end)
+        except BaseException as e:
+            q.put(e)
+
+    threading.Thread(target=produce, daemon=True).start()
+    while (item := q.get()) is not end:
+        if isinstance(item, BaseException):
+            raise item
+        yield item
+
+
+def _run_demucs(separator, wav=None, blocks=None, sink=None) -> dict:
     """Split a song into its stems with the separator's model, on whichever
-    device it's on, handing each stretch to `sink` as it's finished."""
+    device it's on, handing each stretch to `sink` as it's finished. The
+    song is `wav`, or `blocks` of it as they're decoded."""
+    from stemsep.audio import NotStreamable
+
     try:
+        if blocks is not None:
+            return separator.separate_stream(blocks, sink=sink)
         return separator.separate(wav, sink=sink)
+    except NotStreamable:
+        raise  # the decoder's, not the GPU's: decode it whole instead
     except Exception:
         # A GPU error can leave CUDA unusable for the rest of the process, and
         # the model stays loaded for later songs. So this container finishes
@@ -401,7 +432,7 @@ def _separate(
     match: dict | None = None,
 ):
     import boto3
-    from stemsep.audio import StreamingMP3
+    from stemsep.audio import NotStreamable, StreamingMP3, decode_blocks
 
     # Seconds per stage, logged with each job and returned to the caller.
     timings: dict[str, float] = {}
@@ -471,19 +502,34 @@ def _separate(
                 input_sha256 = _sha256(input_path)
             progress(15)
 
-            with timed("decode"):
-                wav = _decode(separator, input_path, uploaded=not url)
             # The stems encode to MP3 as they come off the GPU, one LAME per
             # stem on its own core, rather than all after it.
-            encoder = StreamingMP3(
-                STEMS, separator.samplerate, separator.audio_channels, gain=STEM_GAIN
+            def new_encoder():
+                return StreamingMP3(
+                    STEMS, separator.samplerate, separator.audio_channels, gain=STEM_GAIN
+                )
+
+            # Most songs (MP3, WAV, FLAC, Ogg) decode while they separate,
+            # on a thread from now, so a new container's warm-up overlaps it
+            # too. Anything else, or anything libsndfile would read short,
+            # is decoded whole first.
+            blocks = _prefetch(
+                decode_blocks(input_path, separator.samplerate, separator.audio_channels)
             )
+            encoder = new_encoder()
             try:
                 with timed("warmup_wait"):
                     if warmup is not None:
                         warmup.join()
                 with timed("separate"):
-                    stems = _run_demucs(separator, wav, sink=encoder.feed)
+                    try:
+                        stems = _run_demucs(separator, blocks=blocks, sink=encoder.feed)
+                    except NotStreamable:
+                        encoder.close()
+                        encoder = new_encoder()
+                        with timed("decode"):
+                            wav = _decode(separator, input_path, uploaded=not url)
+                        stems = _run_demucs(separator, wav, sink=encoder.feed)
                 progress(80)
                 with timed("encode"):
                     mp3s = encoder.finish(stems)
