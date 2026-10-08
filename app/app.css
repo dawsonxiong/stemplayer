@@ -16,6 +16,11 @@
   --text-display: clamp(1.25rem, 0.9rem + 1.2vw, 1.75rem);
   --text-display--line-height: 1.25;
   --text-display--letter-spacing: -0.01em;
+  /* A loaded song's title on phones, where it heads the page alone above
+     the device. Wide screens use text-display beside the device. */
+  --text-headline: 1.75rem;
+  --text-headline--line-height: 1.2;
+  --text-headline--letter-spacing: -0.015em;
   /* Anything read as a sentence: buttons, list items, notices. */
   --text-body: 0.875rem;
   --text-body--line-height: 1.5;
@@ -33,6 +38,10 @@
   --text-wordmark: 1.125rem;
   --text-wordmark--line-height: 1;
   --text-wordmark--letter-spacing: 0.22em;
+  /* The same mark tucked into a phone's top-left corner. */
+  --text-wordmark-compact: 0.875rem;
+  --text-wordmark-compact--line-height: 1;
+  --text-wordmark-compact--letter-spacing: 0.22em;
 
   --color-*: initial;
   --color-page: #e8e3d4;

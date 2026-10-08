@@ -284,8 +284,10 @@ export function Home() {
   // sliders; on wide screens it heads the controls column. One element,
   // placed by the grid below.
   const trackHeading = hasTrack && (
-    <div className="flex flex-col items-start gap-1.5">
-      <p className="line-clamp-3 text-display text-balance wrap-break-word text-ink">
+    // Centred and larger on phones, where it heads the page above the
+    // device; left-aligned at the head of the controls on wide screens.
+    <div className="flex flex-col items-center gap-1.5 text-center lg:items-start lg:text-left">
+      <p className="line-clamp-3 text-headline text-balance wrap-break-word text-ink lg:text-display">
         {trackTitle}
       </p>
       {status === "ready" ? (
@@ -322,7 +324,7 @@ export function Home() {
   );
 
   return (
-    <main className="relative z-10 flex min-h-screen flex-col items-center px-4 pt-10 pb-8 sm:pt-14 sm:pb-12 lg:px-10 lg:pt-8">
+    <main className="relative z-10 flex min-h-screen flex-col items-center px-4 pt-5 pb-8 sm:pt-6 sm:pb-12 lg:px-10 lg:pt-8">
       {/* Past the device's sliders and swatches, straight to the song and
           its controls. Shown only while focused. */}
       <a
@@ -331,10 +333,15 @@ export function Home() {
       >
         Skip to controls
       </a>
-      <header className="flex w-full max-w-6xl justify-center lg:justify-start">
+      {/* A small mark in the top-left corner on phones, so the song's title
+          below is what heads the page; full size on wide screens. */}
+      <header className="flex w-full max-w-6xl justify-start">
         {/* The product's own logotype, so the one place type is set in caps. */}
-        <h1 translate="no" className="flex items-center gap-3 text-wordmark text-ink uppercase">
-          <DeviceIcon className="h-7 w-auto" />
+        <h1
+          translate="no"
+          className="flex items-center gap-2 text-wordmark-compact text-ink uppercase lg:gap-3 lg:text-wordmark"
+        >
+          <DeviceIcon className="h-5 w-auto lg:h-7" />
           Stem Player
         </h1>
       </header>

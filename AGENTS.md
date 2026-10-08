@@ -46,7 +46,7 @@ modal deploy modal/app.py
 
 The design system lives in the `@theme` block of `app/app.css`. Tailwind's default colour, type and radius scales are switched off, so only these tokens exist:
 
-- Text: `text-wordmark`, `text-display` (headlines, song title), `text-body`, `text-caption`, `text-micro` (caps labels). Each sets its own line height and tracking.
+- Text: `text-wordmark` / `text-wordmark-compact` (phones), `text-headline` (song title on phones), `text-display` (headlines, song title), `text-body`, `text-caption`, `text-micro` (caps labels). Each sets its own line height and tracking.
 - Colour: `page`, `raised`, `ink`, `ink-muted`, `line`, `line-strong`, `well`, `led-cyan`, `led-magenta`, `cyan-ink` (on), `magenta-ink` (focus, errors), `record`.
 - Radius: `rounded-panel`, `rounded-row`, `rounded-key`, `rounded-full`.
 - Buttons: `btn-primary`, `btn-secondary`, `btn-icon`.
