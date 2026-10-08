@@ -1,4 +1,4 @@
-import { POLL_FAST_MS, POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
+import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
 
 /** How long to keep asking for stems the server still calls unfinished. Only
  *  a job record from before they moved to R2 can lag the status poll: KV
@@ -115,24 +115,24 @@ export async function pollStatus(
   taskId: string,
   onProgress?: (progress: number) => void,
 ): Promise<JobStatus> {
-  const start = Date.now();
-  const deadline = start + POLL_TIMEOUT_MS;
-  let interval = POLL_INTERVAL_MS;
+  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  let since = "";
   let failures = 0;
 
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, interval));
-    if (Date.now() - start > POLL_FAST_MS) {
-      interval = Math.min(interval * 1.25, POLL_MAX_INTERVAL_MS);
-    }
-
-    const res = await fetch(`/api/status/${taskId}`).catch(() => null);
+    // The Worker holds this until the job moves on from `since`, so a change
+    // arrives as it happens rather than at the next poll.
+    const asked = Date.now();
+    const res = await fetch(
+      `/api/status/${taskId}${since ? `?since=${encodeURIComponent(since)}` : ""}`,
+    ).catch(() => null);
     // Job records are strongly consistent, so a 404 is gone for good.
     if (res?.status === 404) throw new TrackNotFoundError("Task not found");
     // One failed check (a dropped connection, a storage hiccup) shouldn't
     // end a run that's going fine; several in a row should.
     if (!res?.ok) {
       if (++failures >= 3) throw new Error(`Status check failed (${res?.status ?? "network"})`);
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       continue;
     }
     failures = 0;
@@ -144,6 +144,14 @@ export async function pollStatus(
       throw new Error(data.error || "Separation failed");
     }
     if (typeof data.progress === "number") onProgress?.(data.progress);
+
+    const state = `${data.status}:${data.progress ?? ""}`;
+    // A Worker that answered at once with nothing new didn't wait (one from
+    // before it could): fall back to polling rather than spin.
+    if (state === since && Date.now() - asked < POLL_INTERVAL_MS) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    since = state;
   }
 
   throw new UserFacingError("Separating took too long. Try a shorter song.");

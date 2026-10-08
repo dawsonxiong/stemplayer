@@ -63,6 +63,7 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 - Verify the webhook secret in `app/api/webhook/route.ts` against `WEBHOOK_SECRET`. The same secret is the bearer token the Worker sends to Modal (Modal secret `stemplayer-webhook`).
 - The browser never talks to Modal directly.
 - Uploads go straight to R2 via presigned URL, not through the Worker.
+- `/api/status/<id>?since=<status>:<progress>` long-polls: the Worker re-reads the R2 record every 250 ms and answers when it changes (or after 20 s), and the client asks again.
 - Job records live in R2, not KV. KV caches each key per location for up to a minute, so status written where Modal's webhook lands reached a person elsewhere 7–50 s late. KV is fine for the cache index and rate limits, where staleness costs nothing.
 - Do not hand-edit `worker-configuration.d.ts`.
 
