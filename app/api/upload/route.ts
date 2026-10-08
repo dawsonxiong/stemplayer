@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { MAX_FILE_SIZE_MB, ACCEPTED_FORMATS } from "~/lib/constants";
 import { SHA256, findCachedTask, stemCacheKey } from "~/lib/stem-cache";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
+import { warmGpu } from "~/lib/warm.server";
 
 const EXTENSION = /\.(mp3|wav|flac|ogg|aac|m4a)$/i;
 
@@ -55,5 +56,7 @@ export async function POST(request: Request) {
     { expirationTtl: 86400 * 14 },
   );
 
+  // A GPU takes several seconds to start: let it start while the song uploads.
+  warmGpu();
   return Response.json({ taskId, uploadUrl });
 }

@@ -6,6 +6,7 @@ I/O backends, and encoders in separate processes really do run side by side.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable
@@ -20,23 +21,20 @@ class DecodeError(RuntimeError):
 
 def decode(path: str, samplerate: int = 44100, channels: int = 2) -> torch.Tensor:
     """The first audio stream of `path` as a float32 [channels, length]
-    tensor, resampled by ffmpeg and remixed as demucs's AudioFile does: mono
-    is copied to every channel and extra channels are dropped. ffmpeg's own
-    `-ac` would upmix mono 3 dB quieter and fold surround channels in."""
-    cmd = [
-        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-        "-i", path,
-        "-map", "0:a:0",
-        "-ar", str(samplerate),
-        "-c:a", "pcm_f32le", "-f", "wav", "-",
-    ]  # fmt: skip
-    proc = subprocess.run(cmd, capture_output=True)
-    if proc.returncode != 0:
-        raise DecodeError(proc.stderr.decode(errors="replace").strip()[-500:])
-    src, data = _wav_samples(proc.stdout)
-    frames = data[: data.size // src * src].reshape(-1, src)
+    tensor, remixed as demucs's AudioFile does: mono is copied to every
+    channel and extra channels are dropped. ffmpeg's own `-ac` would upmix
+    mono 3 dB quieter and fold surround channels in.
+
+    MP3, WAV, FLAC and Ogg at `samplerate` are read in process by
+    libsndfile, which for a 4-minute MP3 takes two thirds of the time of
+    ffmpeg piping out 86 MB of samples, to within 3e-6 of the same samples.
+    Anything else, or anything to resample, goes through ffmpeg."""
+    frames = _read_soundfile(path, samplerate)
+    if frames is None:
+        frames = _read_ffmpeg(path, samplerate)
     if frames.size == 0:
         raise DecodeError("no audio")
+    src = frames.shape[1]
     if src == channels:
         pass
     elif channels == 1:
@@ -48,6 +46,66 @@ def decode(path: str, samplerate: int = 44100, channels: int = 2) -> torch.Tenso
     else:
         raise DecodeError(f"can't make {channels} channels from {src}")
     return torch.from_numpy(frames.T.copy())
+
+
+def _read_soundfile(path: str, samplerate: int) -> np.ndarray | None:
+    """[length, channels] float32 frames, or None if libsndfile can't read
+    the file at `samplerate` as it is, or would read it differently from
+    ffmpeg."""
+    try:
+        import soundfile as sf
+
+        with open(path, "rb") as raw, sf.SoundFile(reads := _Reads(raw)) as f:
+            # libsndfile keeps Vorbis's channel order, left, centre, right,
+            # where ffmpeg, and so demucs, puts right second.
+            if f.samplerate != samplerate or f.channels > 2:
+                return None
+            frames = f.read(dtype="float32", always_2d=True)
+            # An MP3's length is libsndfile's guess, from its Xing header or,
+            # without one, from the first frame's bitrate, and it reads no
+            # further: a VBR file with no header came back a quarter of its
+            # length. A whole read reaches the end of the file, short of at
+            # most a tag.
+            if f.format == "MP3" and os.fstat(raw.fileno()).st_size - reads.end > 4096:
+                return None
+            # Nothing at all may be a WAV whose header never got its sizes
+            # filled in, which ffmpeg reads to the end of the file.
+            return frames if len(frames) else None
+    except Exception:
+        return None
+
+
+class _Reads:
+    """A file that remembers where its last read ended."""
+
+    def __init__(self, f):
+        self.f, self.end = f, 0
+
+    def seek(self, *args):
+        return self.f.seek(*args)
+
+    def tell(self):
+        return self.f.tell()
+
+    def readinto(self, buf):
+        n = self.f.readinto(buf)
+        self.end = self.f.tell()
+        return n
+
+
+def _read_ffmpeg(path: str, samplerate: int) -> np.ndarray:
+    cmd = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+        "-i", path,
+        "-map", "0:a:0",
+        "-ar", str(samplerate),
+        "-c:a", "pcm_f32le", "-f", "wav", "-",
+    ]  # fmt: skip
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0:
+        raise DecodeError(proc.stderr.decode(errors="replace").strip()[-500:])
+    src, data = _wav_samples(proc.stdout)
+    return data[: data.size // src * src].reshape(-1, src)
 
 
 def _wav_samples(data: bytes) -> tuple[int, np.ndarray]:
@@ -81,26 +139,125 @@ def _rescale(wav: torch.Tensor) -> torch.Tensor:
 QUALITY = 5
 
 
-def encode_mp3(
-    wav: torch.Tensor, path: str, samplerate: int, bitrate: int = 192, quality: int = QUALITY
-) -> None:
-    """Encode [channels, length] float audio to CBR MP3 in process with
-    lameenc, as `demucs.audio.save_audio` does. lameenc releases the GIL, so
-    stems encode in parallel on threads."""
+def _to_int16(wav: torch.Tensor) -> np.ndarray:
+    """Interleaved int16 samples. As demucs's i16_pcm does, give or take
+    0.0003 dB: it clamps first and scales by 2**15 - 1."""
+    return (wav * 2**15).clamp_(-(2**15), 2**15 - 1).short().T.contiguous().numpy()
+
+
+def _lame(samplerate: int, channels: int, bitrate: int, quality: int):
     import lameenc
 
-    wav = _rescale(wav.float())
-    # To int16 as demucs's i16_pcm does, give or take 0.0003 dB: it clamps
-    # first and scales by 2**15 - 1. Nothing clips once rescaled.
-    pcm = (wav * 2**15).clamp_(-(2**15), 2**15 - 1).short().T.contiguous().numpy()
     encoder = lameenc.Encoder()
     encoder.set_bit_rate(bitrate)
     encoder.set_in_sample_rate(samplerate)
-    encoder.set_channels(wav.shape[0])
+    encoder.set_channels(channels)
     encoder.set_quality(quality)
-    data = encoder.encode(pcm.tobytes()) + encoder.flush()
+    return encoder
+
+
+def mp3_bytes(
+    wav: torch.Tensor, samplerate: int, bitrate: int = 192, quality: int = QUALITY
+) -> bytes:
+    """[channels, length] float audio as CBR MP3, encoded in process with
+    lameenc, as `demucs.audio.save_audio` does. lameenc releases the GIL, so
+    stems encode in parallel on threads."""
+    wav = _rescale(wav.float())
+    encoder = _lame(samplerate, wav.shape[0], bitrate, quality)
+    return bytes(encoder.encode(_to_int16(wav).tobytes()) + encoder.flush())
+
+
+def encode_mp3(
+    wav: torch.Tensor, path: str, samplerate: int, bitrate: int = 192, quality: int = QUALITY
+) -> None:
+    """`mp3_bytes`, written to `path`."""
     with open(path, "wb") as f:
-        f.write(data)
+        f.write(mp3_bytes(wav, samplerate, bitrate, quality))
+
+
+class StreamingMP3:
+    """Encodes stems while they're still being separated: pass `feed` as
+    `Separator.separate`'s `sink`, then call `finish` with its result.
+
+    The rescale that keeps a stem from clipping needs the stem's peak, which
+    isn't known until the end. So each stem is encoded as it arrives as if it
+    won't need one, and `finish` encodes it again, whole, in the rare case it
+    does: no stem of 12 full MUSDB songs came within 1% of clipping. Either
+    way the bytes are exactly `mp3_bytes`'s."""
+
+    def __init__(
+        self,
+        names: Iterable[str],
+        samplerate: int,
+        channels: int,
+        bitrate: int = 192,
+        quality: int = QUALITY,
+    ):
+        import queue
+        import threading
+
+        self.samplerate, self.bitrate, self.quality = samplerate, bitrate, quality
+        self._queues = {n: queue.Queue() for n in names}
+        self._data: dict[str, bytearray] = {}
+        self._peak = {n: 0.0 for n in self._queues}
+        self._errors: list[BaseException] = []
+        self._closed = False
+        self._threads = [
+            threading.Thread(target=self._run, args=(n, channels), daemon=True)
+            for n in self._queues
+        ]
+        for t in self._threads:
+            t.start()
+
+    def feed(self, segments: dict[str, torch.Tensor]) -> None:
+        for name, segment in segments.items():
+            self._queues[name].put(segment)
+
+    def _run(self, name: str, channels: int) -> None:
+        segment = ...  # anything but None, until the end has been taken
+        try:
+            encoder = _lame(self.samplerate, channels, self.bitrate, self.quality)
+            data = bytearray()
+            while (segment := self._queues[name].get()) is not None:
+                segment = segment.float()
+                self._peak[name] = max(self._peak[name], segment.abs().max().item())
+                data += encoder.encode(_to_int16(segment).tobytes())
+            data += encoder.flush()
+            self._data[name] = data
+        except BaseException as e:  # surfaced by finish
+            self._errors.append(e)
+            # Drain to the end, freeing what's queued, so close's join
+            # returns. If the flush failed, the end was already taken, and
+            # waiting for another would hang it.
+            while segment is not None:
+                segment = self._queues[name].get()
+
+    def close(self) -> None:
+        """Stop the encoders without waiting for a result, as when the
+        separation failed. Safe to call more than once."""
+        if not self._closed:
+            self._closed = True
+            for q in self._queues.values():
+                q.put(None)
+        for t in self._threads:
+            t.join()
+
+    def finish(self, stems: dict[str, torch.Tensor]) -> dict[str, bytes]:
+        """Each stem's MP3. `stems` is `separate`'s result, used to encode
+        again any stem that turned out to need rescaling."""
+        self.close()
+        if self._errors:
+            raise self._errors[0]
+        clipped = [n for n, peak in self._peak.items() if 1.01 * peak > 1]
+        out = {n: bytes(d) for n, d in self._data.items() if n not in clipped}
+        if clipped:
+            with ThreadPoolExecutor(len(clipped)) as pool:
+                encoded = pool.map(
+                    lambda n: mp3_bytes(stems[n], self.samplerate, self.bitrate, self.quality),
+                    clipped,
+                )
+                out.update(zip(clipped, encoded))
+        return out
 
 
 def encode_mp3_ffmpeg(

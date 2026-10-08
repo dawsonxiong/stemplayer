@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { findCachedTask, linkCacheKey } from "~/lib/stem-cache";
+import { warmGpu } from "~/lib/warm.server";
 import { parseLink, UNSUPPORTED_LINK } from "~/lib/links";
 import { LinkError, resolveLink, type ResolvedLink } from "~/lib/links.server";
 
@@ -41,5 +42,8 @@ export async function POST(request: Request) {
     { expirationTtl: 86400 * 14 },
   );
 
+  // A GPU takes several seconds to start: let it start while the browser
+  // carries on to /api/separate.
+  warmGpu();
   return Response.json({ taskId, title: link.title });
 }
