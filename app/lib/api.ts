@@ -180,3 +180,13 @@ export async function fetchStemUrls(taskId: string) {
     gains?: Record<string, number>;
   }>;
 }
+
+let lastWarm = 0;
+
+/** Starts a GPU for a song that's been picked but not yet split, so it's up
+ *  sooner. Once a minute at most: a link field calls this as it's typed. */
+export function warmGpu(): void {
+  if (Date.now() - lastWarm < 60_000) return;
+  lastWarm = Date.now();
+  void fetch("/api/warm", { method: "POST" }).catch(() => {});
+}

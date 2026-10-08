@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { warmGpu } from "~/lib/api";
 import { usePlayerStore } from "~/lib/store";
 import { MAX_FILE_SIZE_MB, MAX_DURATION_MINUTES, ACCEPTED_FORMATS } from "~/lib/constants";
 import { COLLECTION_LINK, parseLink, UNSUPPORTED_LINK } from "~/lib/links";
@@ -23,6 +24,8 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     setError(null);
     setLink(url);
     if (url.trim()) setFile(null);
+    // A GPU takes seconds to start: start one while Split is still to press.
+    if (parseLink(url.trim())) warmGpu();
   }, []);
 
   const split = useCallback(() => {
@@ -75,6 +78,7 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
 
     setFile(picked);
     setLink("");
+    warmGpu();
   }, []);
 
   const handleChange = useCallback(
