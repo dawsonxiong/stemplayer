@@ -11,9 +11,12 @@ demucs_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install(
+        # demucs supplies the model and its weights; stemsep (vendored below)
+        # runs it. torchaudio isn't used, but demucs imports it.
         "demucs==4.0.1",
-        "torch==2.3.1",
-        "torchaudio==2.3.1",
+        "torch==2.11.0",
+        "torchaudio==2.11.0",
+        "lameenc==1.8.4",
         "boto3==1.34.0",
         "requests==2.34.2",
         # yt-dlp needs a JavaScript runtime to solve YouTube's challenges. The
@@ -26,6 +29,7 @@ demucs_image = (
     .run_commands(
         "python -c \"from demucs.pretrained import get_model; get_model('htdemucs')\""
     )
+    .add_local_python_source("stemsep")
 )
 
 api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
@@ -251,55 +255,52 @@ def _find_on_youtube(artist: str, title: str, duration_ms: int) -> dict:
 STEMS = ("vocals", "drums", "bass", "other")
 
 
-def _run_demucs(model, input_path: str) -> dict:
-    """Split a song into its stems, on whichever device the model is on.
+# How stemsep runs Demucs, chosen by benchmark (github.com/dawsonxiong/stemsep):
+# chunks batched 8 to a pass, half precision, and 10% overlap between chunks
+# rather than demucs's 25%. On an A10 a 4-minute song separates in 1.9 s,
+# against 5.5 s for demucs's apply_model, and on 12 full MUSDB18 songs its
+# SDR is within 0.02 dB of demucs's.
+SEPARATOR_CONFIG = dict(overlap=0.10, batch_size=8, precision="fp16")
 
-    The same steps as `python -m demucs -n htdemucs`, run in this process so
-    the model is loaded once per container rather than once per song."""
-    import subprocess
-    import torchaudio
-    from demucs.apply import apply_model
-    from demucs.audio import AudioFile, convert_audio
+UNREADABLE = "That file couldn’t be read as audio. Try another file, or a link to the song."
+
+
+def _run_demucs(separator, input_path: str, uploaded: bool) -> dict:
+    """Split a song into its stems with the separator's model, on whichever
+    device it's on."""
+    from stemsep.audio import DecodeError, decode
 
     try:
-        wav = AudioFile(input_path).read(
-            streams=0, samplerate=model.samplerate, channels=model.audio_channels
-        )
-    except subprocess.CalledProcessError:
-        # The CLI's fallback for what ffmpeg can't read.
-        wav, sr = torchaudio.load(input_path)
-        wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
-    ref = wav.mean(0)
-    mean, std = ref.mean(), ref.std()
-    device = next(model.parameters()).device
+        wav = decode(input_path, separator.samplerate, separator.audio_channels)
+    except DecodeError as e:
+        # An upload that won't decode is the person's file. A download that
+        # won't is ours to retry, so it stays a plain error.
+        if uploaded:
+            raise UserError(UNREADABLE) from e
+        raise
     try:
-        sources = apply_model(
-            model, ((wav - mean) / std)[None].to(device), shifts=1, split=True, overlap=0.25
-        )[0].cpu() * std + mean
+        return separator.separate(wav)
     except Exception:
         # A GPU error can leave CUDA unusable for the rest of the process, and
         # the model stays loaded for later songs. So this container finishes
         # this song and takes no more, and the next song gets a fresh one.
         modal.experimental.stop_fetching_inputs()
         raise
-    return dict(zip(model.sources, sources))
-
-
-def _save_mp3(wav, path: str, samplerate: int) -> None:
-    """Encode a stem as `python -m demucs --mp3 --mp3-bitrate 192` does."""
-    from demucs.audio import save_audio
-
-    save_audio(wav, path, samplerate=samplerate, bitrate=192, preset=2, clip="rescale")
 
 
 @app.cls(
     image=demucs_image,
-    # About twice a T4's speed on Demucs, for about a third more per second.
-    gpu="L4",
+    # A 4-minute song takes ~5.8 s on an A10 from decoding to the last MP3,
+    # against ~8.9 s on an L4 and ~8.7 s on a T4: most of a job is now
+    # decoding and encoding on the CPU, and A10 hosts have faster ones. At
+    # about 0.23¢ a song it costs the same as a T4 and less than an L4.
+    gpu="A10",
     # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
     cpu=4.0,
     timeout=900,
-    scaledown_window=300,
+    # An idle A10 costs ~0.04¢ a second, so a 5-minute wait for the next song
+    # cost 50 songs' worth. A cold start is now ~7 s to ready, so wait 2 minutes.
+    scaledown_window=120,
     memory=8192,
     secrets=[modal.Secret.from_name("r2-creds"), webhook_secret, apify_secret],
     # A cold start restores torch and the loaded model from a snapshot
@@ -309,17 +310,15 @@ def _save_mp3(wav, path: str, samplerate: int) -> None:
 class Separator:
     @modal.enter(snap=True)
     def load_model(self):
-        from demucs.pretrained import get_model
+        from stemsep import Config, Separator as Stemsep
 
         # No GPU while the snapshot is taken, so the model loads on the CPU.
-        self.model = get_model("htdemucs")
-        self.model.eval()
+        self.separator = Stemsep("htdemucs", Config(**SEPARATOR_CONFIG), device="cpu")
 
     @modal.enter(snap=False)
     def move_to_gpu(self):
-        # Kept on the GPU between songs. apply_model moves a model on the CPU
-        # over and back again on every call.
-        self.model.to("cuda")
+        # Kept on the GPU between songs.
+        self.separator.to("cuda")
 
     @modal.method()
     def separate(self, task_id: str, webhook_url: str, **song):
@@ -333,11 +332,11 @@ class Separator:
         R2 credentials and the webhook secret come from Modal secrets, not the
         request body.
         """
-        return _separate(self.model, task_id, webhook_url, **song)
+        return _separate(self.separator, task_id, webhook_url, **song)
 
 
 def _separate(
-    model,
+    separator,
     task_id: str,
     webhook_url: str,
     input_r2_key: str | None = None,
@@ -346,6 +345,7 @@ def _separate(
     match: dict | None = None,
 ):
     import boto3
+    from stemsep.audio import encode_mp3
 
     def progress(pct: int):
         _report(
@@ -396,21 +396,21 @@ def _separate(
             input_sha256 = _sha256(input_path)
             progress(15)
 
-            stems = _run_demucs(model, input_path)
+            stems = _run_demucs(separator, input_path, uploaded=not url)
             progress(80)
 
             stem_keys = {name: f"stems/{task_id}/{name}.mp3" for name in STEMS}
 
             def encode_and_upload(name: str) -> None:
                 path = os.path.join(tmpdir, f"{name}.mp3")
-                _save_mp3(stems[name], path, model.samplerate)
+                encode_mp3(stems[name], path, separator.samplerate)
                 s3.upload_file(
                     path, bucket, stem_keys[name],
                     ExtraArgs={"ContentType": "audio/mpeg"},
                 )
 
-            # LAME runs on one core, so the four stems encode side by side,
-            # each uploading as soon as it's done.
+            # LAME runs on one core and lameenc lets go of the GIL, so the
+            # four stems encode side by side, each uploading once it's done.
             with ThreadPoolExecutor(len(STEMS)) as pool:
                 list(pool.map(encode_and_upload, STEMS))
 

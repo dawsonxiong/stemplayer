@@ -37,7 +37,7 @@ modal deploy modal/app.py
 - Cloudflare Workers — `wrangler.jsonc` points `main` at vinext's `vinext/server/fetch-handler`. Route handlers read bindings with `import { env } from "cloudflare:workers"`. wrangler + `@cloudflare/vite-plugin`.
 - `pnpm typecheck` runs `vinext typegen`, which writes `next-env.d.ts` and `.next/types` (`RouteContext<"/api/...">`). Both are generated and gitignored.
 - R2 (`AUDIO_BUCKET`) for uploads and stems; KV (`JOBS`) for job status.
-- Modal (`modal/app.py`) runs Demucs 4.0.1 on GPU.
+- Modal (`modal/app.py`) runs Demucs 4.0.1's `htdemucs` on an A10 through stemsep, a faster runner for it, vendored at `modal/stemsep/` from the private repo `dawsonxiong/stemsep`. Don't edit the vendored copy: change stemsep, then run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Its benchmarks and the reasons behind `SEPARATOR_CONFIG` live there.
 - Three.js via `@react-three/fiber` + drei; zustand; framer-motion; aws4fetch.
 - Tailwind v4 via `@tailwindcss/vite`. No shadcn/ui.
 - pnpm.
