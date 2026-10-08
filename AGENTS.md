@@ -38,7 +38,7 @@ modal deploy modal/app.py
 - App Router via vinext (`vinext()` in `vite.config.ts`). `app/layout.tsx` and `app/page.tsx` are server components; the player is one client tree under `app/components/Home.tsx` (`"use client"`). API endpoints are route handlers in `app/api/**/route.ts`, not server actions.
 - Cloudflare Workers — `wrangler.jsonc` points `main` at vinext's `vinext/server/fetch-handler`. Route handlers read bindings with `import { env } from "cloudflare:workers"`. wrangler + `@cloudflare/vite-plugin`.
 - `pnpm typecheck` runs `vinext typegen`, which writes `next-env.d.ts` and `.next/types` (`RouteContext<"/api/...">`). Both are generated and gitignored.
-- R2 (`AUDIO_BUCKET`) for uploads, stems and job records (`stems/<taskId>/job.json`, via `app/lib/jobs.server.ts`); KV (`JOBS`) for the stem cache index and rate limits.
+- R2 (`AUDIO_BUCKET`) for uploads, stems and job records (`stems/<taskId>/job.json`, via `app/lib/jobs.server.ts`); KV (`JOBS`) for the stem cache index and rate limits. The bucket's lifecycle rules, set on the bucket rather than in code, expire `stems/` (job records included) after 14 days and `uploads/` after 1.
 - Modal (`modal/app.py`) runs Demucs 4.0.1's `htdemucs` on an A10 through stemsep, a faster runner for it, vendored at `modal/stemsep/` from the private repo `dawsonxiong/stemsep`. Don't edit the vendored copy: change stemsep, then run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Its benchmarks and the reasons behind `SEPARATOR_CONFIG` live there.
 - Three.js via `@react-three/fiber` + drei; zustand; framer-motion; aws4fetch.
 - Tailwind v4 via `@tailwindcss/vite`. No shadcn/ui.

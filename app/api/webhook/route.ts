@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getJob, putJob } from "~/lib/jobs.server";
+import { updateJob } from "~/lib/jobs.server";
 import { secretMatches } from "~/lib/utils/secret";
 import { SHA256, linkCacheKey, stemCacheKey } from "~/lib/stem-cache";
 import type { Provider } from "~/lib/links";
@@ -43,37 +43,40 @@ export async function POST(request: Request) {
     input_sha256?: string;
   };
 
-  const existing = await getJob<{
-    status: string;
-    title?: string;
-    link?: { provider: Provider; id: string };
-  }>(task_id);
-  if (!existing) {
-    return Response.json({ error: "Task not found" }, { status: 404 });
-  }
   const matchedId =
     matched_youtube_id && YOUTUBE_ID.test(matched_youtube_id) ? matched_youtube_id : null;
   const done = status === "ready" || status === "error";
 
-  // Progress posts can land after the final one; never step back from done.
-  if (existing.status === "ready" || existing.status === "error") {
+  let ignored = false;
+  const existing = await updateJob<{
+    status: string;
+    title?: string;
+    link?: { provider: Provider; id: string };
+  }>(task_id, (job) => {
+    // Progress posts can land after the final one; never step back from done.
+    ignored = job.status === "ready" || job.status === "error";
+    if (ignored) return null;
+    return {
+      ...job,
+      status,
+      ...(progress !== undefined && { progress }),
+      ...(stems && { stems }),
+      ...(error && { error }),
+      ...(user_error && { userError: user_error.slice(0, 300) }),
+      ...(retryable === true && { retryable: true }),
+      ...(title && !job.title && { title: title.slice(0, 200) }),
+      ...(matchedId && {
+        matchedVideo: { id: matchedId, title: (matched_title ?? "").slice(0, 200) },
+      }),
+      ...(done && { completedAt: Date.now() }),
+    };
+  });
+  if (!existing) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
+  if (ignored) {
     return Response.json({ ok: true, ignored: true });
   }
-
-  await putJob(task_id, {
-    ...existing,
-    status,
-    ...(progress !== undefined && { progress }),
-    ...(stems && { stems }),
-    ...(error && { error }),
-    ...(user_error && { userError: user_error.slice(0, 300) }),
-    ...(retryable === true && { retryable: true }),
-    ...(title && !existing.title && { title: title.slice(0, 200) }),
-    ...(matchedId && {
-      matchedVideo: { id: matchedId, title: (matched_title ?? "").slice(0, 200) },
-    }),
-    ...(done && { completedAt: Date.now() }),
-  });
 
   // Expires with the job, since the stems it points at go at the same time.
   if (status === "ready" && input_sha256 && SHA256.test(input_sha256)) {

@@ -8,7 +8,8 @@
   "main": "vinext/server/fetch-handler",
   "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" },
 
-  // R2 bucket for audio files (uploads + stems)
+  // R2 bucket for uploads, stems and job records. Its lifecycle rules (set on
+  // the bucket, not here) expire stems/ after 14 days and uploads/ after 1.
   "r2_buckets": [
     {
       "binding": "AUDIO_BUCKET",
@@ -16,7 +17,7 @@
     },
   ],
 
-  // KV namespace for job status tracking
+  // KV namespace for the stem cache index and rate limits
   "kv_namespaces": [
     {
       "binding": "JOBS",

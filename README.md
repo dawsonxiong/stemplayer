@@ -15,7 +15,7 @@ Kanye's Stem Player, right in the browser. Upload a song, it gets split into ste
 
 ## How it works
 
-The browser uploads the song straight to Cloudflare R2 with a presigned URL. A Worker then starts a Modal job, which runs Demucs on a GPU and sends the four stems back to a webhook. Job status is kept in Workers KV and the page polls it until the stems are ready. After that, playback and mixing happen client-side with the Web Audio API.
+The browser uploads the song straight to Cloudflare R2 with a presigned URL. A Worker then starts a Modal job, which runs Demucs on a GPU and sends the four stems back to a webhook. Job status is kept in R2 next to the stems, and the page polls it until they're ready. After that, playback and mixing happen client-side with the Web Audio API.
 
 ## Stack
 

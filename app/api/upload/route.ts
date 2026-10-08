@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   const taskId = crypto.randomUUID();
-  // The original name is kept in KV for the title. It never goes in the key,
+  // The original name is kept in the job record for the title. It never goes in the key,
   // where spaces, '#' or '?' would break the signed URL.
   const r2Key = `uploads/${taskId}/input${ext ?? ""}`;
 

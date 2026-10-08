@@ -1,7 +1,9 @@
 import { POLL_FAST_MS, POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
 
-/** How long a KV read can be served from an edge cache before it refreshes. */
-const KV_CACHE_MS = 60_000;
+/** How long to keep asking for stems the server still calls unfinished. Only
+ *  a job record from before they moved to R2 can lag the status poll: KV
+ *  serves a read from an edge cache for up to a minute. */
+const STEMS_RETRY_MS = 60_000;
 
 /** An error whose message is written for the person using the app (a size
  *  limit, the hourly cap) rather than for a developer. Most are about the song
@@ -116,6 +118,7 @@ export async function pollStatus(
   const start = Date.now();
   const deadline = start + POLL_TIMEOUT_MS;
   let interval = POLL_INTERVAL_MS;
+  let failures = 0;
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, interval));
@@ -123,10 +126,16 @@ export async function pollStatus(
       interval = Math.min(interval * 1.25, POLL_MAX_INTERVAL_MS);
     }
 
-    const res = await fetch(`/api/status/${taskId}`);
-    // KV is eventually consistent: a fresh key can 404 for a moment.
-    if (res.status === 404) continue;
-    if (!res.ok) throw new Error(`Status check failed (${res.status})`);
+    const res = await fetch(`/api/status/${taskId}`).catch(() => null);
+    // Job records are strongly consistent, so a 404 is gone for good.
+    if (res?.status === 404) throw new TrackNotFoundError("Task not found");
+    // One failed check (a dropped connection, a storage hiccup) shouldn't
+    // end a run that's going fine; several in a row should.
+    if (!res?.ok) {
+      if (++failures >= 3) throw new Error(`Status check failed (${res?.status ?? "network"})`);
+      continue;
+    }
+    failures = 0;
     const data = (await res.json()) as JobStatus;
 
     if (data.status === "ready") return data;
@@ -142,9 +151,9 @@ export async function pollStatus(
 
 export async function fetchStemUrls(taskId: string) {
   let res = await fetch(`/api/stems/${taskId}`);
-  // 409: this read is behind the status poll that just saw "ready". KV
-  // caches a read for up to a minute, so give it that long to catch up.
-  const deadline = Date.now() + KV_CACHE_MS;
+  // 409: this read is behind the status poll that just saw "ready", which
+  // only a job record still in KV can be. Give it as long as KV caches a read.
+  const deadline = Date.now() + STEMS_RETRY_MS;
   let interval = POLL_INTERVAL_MS;
   while (res.status === 409 && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, interval));
