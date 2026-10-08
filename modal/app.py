@@ -366,9 +366,12 @@ def _run_demucs(separator, wav=None, blocks=None, sink=None) -> dict:
     # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
     cpu=4.0,
     timeout=900,
-    # An idle A10 costs ~0.04¢ a second, so a 5-minute wait for the next song
-    # cost 50 songs' worth. A cold start is now ~7 s to ready, so wait 2 minutes.
-    scaledown_window=120,
+    # An idle A10 costs ~0.04¢ a second, more than a song every 6 seconds:
+    # the wait after the last song was most of the bill. A GPU now starts as
+    # soon as a song is picked, so a cold one costs ~1–2 s by the time it's
+    # needed. A minute covers songs split back to back; after listening to
+    # one, the next would have found the GPU gone anyway.
+    scaledown_window=60,
     memory=8192,
     secrets=[modal.Secret.from_name("r2-creds"), webhook_secret, apify_secret],
     # A cold start restores torch and the loaded model from a snapshot
@@ -677,8 +680,8 @@ def separate_api():
     @web.post("/warm", status_code=202)
     def warm(authorization: str = Header("")):
         """Called when someone picks a song, so a GPU container starts while
-        it uploads. At most once a minute: a container stays up two minutes
-        after its last input, and a burst of picks shouldn't start a crowd."""
+        it uploads. At most once a minute: a container stays up a minute after
+        its last input, and a burst of picks shouldn't start a crowd."""
         nonlocal last_warm
         authorized(authorization)
         with warm_lock:
