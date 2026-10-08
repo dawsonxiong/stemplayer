@@ -49,7 +49,11 @@ export const ACCEPTED_FORMATS = [
   "audio/mp4",
   "audio/x-m4a",
 ];
-export const POLL_INTERVAL_MS = 2000;
+// A warm job is done in ~5 s, so polling starts every second: a 2 s start
+// backing off to 5 s found it ready 2–5 s late. After POLL_FAST_MS (a cold
+// start, a long download) it backs off.
+export const POLL_INTERVAL_MS = 1000;
+export const POLL_FAST_MS = 30_000;
 export const POLL_MAX_INTERVAL_MS = 5000;
 export const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 export const AUTO_DELETE_DAYS = 14;

@@ -1,9 +1,12 @@
 import hmac
+import json
 import modal
 import modal.experimental
 import os
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 app = modal.App("stem-demucs")
 
@@ -11,9 +14,14 @@ demucs_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install(
+        # demucs supplies the model and its weights; stemsep (vendored below)
+        # runs it. torchaudio isn't used, but demucs imports it.
         "demucs==4.0.1",
-        "torch==2.3.1",
-        "torchaudio==2.3.1",
+        "torch==2.11.0",
+        "torchaudio==2.11.0",
+        "lameenc==1.8.4",
+        # Decodes MP3, WAV, FLAC and Ogg in process; ffmpeg does the rest.
+        "soundfile==0.14.0",
         "boto3==1.34.0",
         "requests==2.34.2",
         # yt-dlp needs a JavaScript runtime to solve YouTube's challenges. The
@@ -26,6 +34,7 @@ demucs_image = (
     .run_commands(
         "python -c \"from demucs.pretrained import get_model; get_model('htdemucs')\""
     )
+    .add_local_python_source("stemsep")
 )
 
 api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
@@ -55,18 +64,32 @@ class YouTubeBlocked(UserError):
 apify_secret = modal.Secret.from_name("stemplayer-apify")
 
 
+_session = None
+
+
 def _report(webhook_url: str, payload: dict) -> None:
     import requests
 
-    try:
-        requests.post(
-            webhook_url,
-            json=payload,
-            headers={"x-webhook-secret": os.environ["WEBHOOK_SECRET"]},
-            timeout=10,
-        )
-    except Exception:
-        pass
+    # One session per container, so reports after the first reuse its
+    # connection to the Worker instead of a new TLS handshake each (~0.3 s).
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    # Twice, since the connection kept from the last song may have been
+    # closed by now, and a lost "ready" would leave the song stuck.
+    for _ in range(2):
+        try:
+            _session.post(
+                webhook_url,
+                json=payload,
+                headers={"x-webhook-secret": os.environ["WEBHOOK_SECRET"]},
+                timeout=10,
+            )
+            return
+        except requests.ConnectionError:
+            continue
+        except Exception:
+            return
 
 
 def _sha256(path: str) -> str:
@@ -251,55 +274,56 @@ def _find_on_youtube(artist: str, title: str, duration_ms: int) -> dict:
 STEMS = ("vocals", "drums", "bass", "other")
 
 
-def _run_demucs(model, input_path: str) -> dict:
-    """Split a song into its stems, on whichever device the model is on.
+# How stemsep runs Demucs, chosen by benchmark (github.com/dawsonxiong/stemsep):
+# chunks batched 8 to a pass, half precision, and 10% overlap between chunks
+# rather than demucs's 25%. On an A10 a 4-minute song separates in 1.9 s,
+# against 5.5 s for demucs's apply_model, and on 12 full MUSDB18 songs its
+# SDR is within 0.02 dB of demucs's.
+SEPARATOR_CONFIG = dict(overlap=0.10, batch_size=8, precision="fp16")
 
-    The same steps as `python -m demucs -n htdemucs`, run in this process so
-    the model is loaded once per container rather than once per song."""
-    import subprocess
-    import torchaudio
-    from demucs.apply import apply_model
-    from demucs.audio import AudioFile, convert_audio
+UNREADABLE = "That file couldn’t be read as audio. Try another file, or a link to the song."
+
+
+def _decode(separator, input_path: str, uploaded: bool):
+    """The song as a [channels, length] tensor at the model's sample rate."""
+    from stemsep.audio import DecodeError, decode
 
     try:
-        wav = AudioFile(input_path).read(
-            streams=0, samplerate=model.samplerate, channels=model.audio_channels
-        )
-    except subprocess.CalledProcessError:
-        # The CLI's fallback for what ffmpeg can't read.
-        wav, sr = torchaudio.load(input_path)
-        wav = convert_audio(wav, sr, model.samplerate, model.audio_channels)
-    ref = wav.mean(0)
-    mean, std = ref.mean(), ref.std()
-    device = next(model.parameters()).device
+        return decode(input_path, separator.samplerate, separator.audio_channels)
+    except DecodeError as e:
+        # An upload that won't decode is the person's file. A download that
+        # won't is ours to retry, so it stays a plain error.
+        if uploaded:
+            raise UserError(UNREADABLE) from e
+        raise
+
+
+def _run_demucs(separator, wav, sink=None) -> dict:
+    """Split a song into its stems with the separator's model, on whichever
+    device it's on, handing each stretch to `sink` as it's finished."""
     try:
-        sources = apply_model(
-            model, ((wav - mean) / std)[None].to(device), shifts=1, split=True, overlap=0.25
-        )[0].cpu() * std + mean
+        return separator.separate(wav, sink=sink)
     except Exception:
         # A GPU error can leave CUDA unusable for the rest of the process, and
         # the model stays loaded for later songs. So this container finishes
         # this song and takes no more, and the next song gets a fresh one.
         modal.experimental.stop_fetching_inputs()
         raise
-    return dict(zip(model.sources, sources))
-
-
-def _save_mp3(wav, path: str, samplerate: int) -> None:
-    """Encode a stem as `python -m demucs --mp3 --mp3-bitrate 192` does."""
-    from demucs.audio import save_audio
-
-    save_audio(wav, path, samplerate=samplerate, bitrate=192, preset=2, clip="rescale")
 
 
 @app.cls(
     image=demucs_image,
-    # About twice a T4's speed on Demucs, for about a third more per second.
-    gpu="L4",
+    # A 4-minute song takes ~5.7 s on an A10 from decoding to the last MP3,
+    # against ~8.1 s on an L4 and ~8.5 s on a T4: most of a job is now
+    # decoding and encoding on the CPU, and A10 hosts have faster ones. At
+    # about 0.21¢ a song it costs within 10% of a T4, and less than an L4.
+    gpu="A10",
     # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
     cpu=4.0,
     timeout=900,
-    scaledown_window=300,
+    # An idle A10 costs ~0.04¢ a second, so a 5-minute wait for the next song
+    # cost 50 songs' worth. A cold start is now ~7 s to ready, so wait 2 minutes.
+    scaledown_window=120,
     memory=8192,
     secrets=[modal.Secret.from_name("r2-creds"), webhook_secret, apify_secret],
     # A cold start restores torch and the loaded model from a snapshot
@@ -309,17 +333,38 @@ def _save_mp3(wav, path: str, samplerate: int) -> None:
 class Separator:
     @modal.enter(snap=True)
     def load_model(self):
-        from demucs.pretrained import get_model
+        from stemsep import Config, Separator as Stemsep
 
         # No GPU while the snapshot is taken, so the model loads on the CPU.
-        self.model = get_model("htdemucs")
-        self.model.eval()
+        self.separator = Stemsep("htdemucs", Config(**SEPARATOR_CONFIG), device="cpu")
 
     @modal.enter(snap=False)
     def move_to_gpu(self):
-        # Kept on the GPU between songs. apply_model moves a model on the CPU
-        # over and back again on every call.
-        self.model.to("cuda")
+        import threading
+
+        # Kept on the GPU between songs.
+        self.separator.to("cuda")
+        # A container's first separation spends ~1.2 s loading CUDA kernels
+        # and setting up its libraries. Doing that on a throwaway clip now,
+        # alongside the first song's download and decoding, takes it off
+        # that song's wait.
+        self.warmup = threading.Thread(target=self._warm_up, daemon=True)
+        self.warmup.start()
+
+    def _warm_up(self):
+        import torch
+
+        try:
+            # Short, so its own GPU time stays small: the kernels it loads
+            # are what the song needs, at any batch size.
+            self.separator.separate(torch.randn(2, 44100 * 20) * 0.1, sink=lambda _: None)
+        except Exception:
+            pass  # the song's own separation will meet any real problem
+
+    @modal.method()
+    def warm(self) -> None:
+        """Nothing: getting a container started, and so loaded and warmed
+        up, before the song it's for has finished uploading is the point."""
 
     @modal.method()
     def separate(self, task_id: str, webhook_url: str, **song):
@@ -333,34 +378,54 @@ class Separator:
         R2 credentials and the webhook secret come from Modal secrets, not the
         request body.
         """
-        return _separate(self.model, task_id, webhook_url, **song)
+        return _separate(self.separator, task_id, webhook_url, warmup=self.warmup, **song)
 
 
 def _separate(
-    model,
+    separator,
     task_id: str,
     webhook_url: str,
+    warmup=None,
     input_r2_key: str | None = None,
     youtube_id: str | None = None,
     soundcloud_id: str | None = None,
     match: dict | None = None,
 ):
     import boto3
+    from stemsep.audio import StreamingMP3
+
+    # Seconds per stage, logged with each job and returned to the caller.
+    timings: dict[str, float] = {}
+
+    @contextmanager
+    def timed(stage: str):
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            timings[stage] = round(time.perf_counter() - start, 3)
+
+    # Progress reports go out from one thread, in order, while the job carries
+    # on. They're drained before the final report, so a late "processing"
+    # can't land after "ready" or "error".
+    reporter = ThreadPoolExecutor(1)
 
     def progress(pct: int):
-        _report(
+        reporter.submit(
+            _report,
             webhook_url,
             {"task_id": task_id, "status": "processing", "progress": pct},
         )
 
     try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=os.environ["R2_ENDPOINT"],
-            aws_access_key_id=os.environ["R2_ACCESS_KEY"],
-            aws_secret_access_key=os.environ["R2_SECRET_KEY"],
-            region_name="auto",
-        )
+        with timed("r2_client"):
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=os.environ["R2_ENDPOINT"],
+                aws_access_key_id=os.environ["R2_ACCESS_KEY"],
+                aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+                region_name="auto",
+            )
 
         bucket = os.environ["R2_BUCKET"]
 
@@ -381,65 +446,81 @@ def _separate(
             else:
                 url = None
 
-            if url:
-                try:
-                    info = _download(url, tmpdir)
-                except YouTubeBlocked:
-                    if not youtube_id:
-                        raise
-                    info = _download_via_apify(youtube_id, tmpdir)
-                input_path = info["requested_downloads"][0]["filepath"]
-                title = info.get("title")
-            else:
-                input_path = os.path.join(tmpdir, "input_audio")
-                s3.download_file(bucket, input_r2_key, input_path)
-            input_sha256 = _sha256(input_path)
+            with timed("fetch"):
+                if url:
+                    try:
+                        info = _download(url, tmpdir)
+                    except YouTubeBlocked:
+                        if not youtube_id:
+                            raise
+                        info = _download_via_apify(youtube_id, tmpdir)
+                    input_path = info["requested_downloads"][0]["filepath"]
+                    title = info.get("title")
+                else:
+                    input_path = os.path.join(tmpdir, "input_audio")
+                    s3.download_file(bucket, input_r2_key, input_path)
+                input_sha256 = _sha256(input_path)
             progress(15)
 
-            stems = _run_demucs(model, input_path)
-            progress(80)
+            with timed("decode"):
+                wav = _decode(separator, input_path, uploaded=not url)
+            # The stems encode to MP3 as they come off the GPU, one LAME per
+            # stem on its own core, rather than all after it.
+            encoder = StreamingMP3(STEMS, separator.samplerate, separator.audio_channels)
+            try:
+                with timed("warmup_wait"):
+                    if warmup is not None:
+                        warmup.join()
+                with timed("separate"):
+                    stems = _run_demucs(separator, wav, sink=encoder.feed)
+                progress(80)
+                with timed("encode"):
+                    mp3s = encoder.finish(stems)
+            finally:
+                encoder.close()
 
             stem_keys = {name: f"stems/{task_id}/{name}.mp3" for name in STEMS}
 
-            def encode_and_upload(name: str) -> None:
-                path = os.path.join(tmpdir, f"{name}.mp3")
-                _save_mp3(stems[name], path, model.samplerate)
-                s3.upload_file(
-                    path, bucket, stem_keys[name],
-                    ExtraArgs={"ContentType": "audio/mpeg"},
+            def upload(name: str) -> None:
+                s3.put_object(
+                    Bucket=bucket, Key=stem_keys[name], Body=mp3s[name],
+                    ContentType="audio/mpeg",
                 )
 
-            # LAME runs on one core, so the four stems encode side by side,
-            # each uploading as soon as it's done.
-            with ThreadPoolExecutor(len(STEMS)) as pool:
-                list(pool.map(encode_and_upload, STEMS))
+            with timed("upload"), ThreadPoolExecutor(len(STEMS)) as pool:
+                list(pool.map(upload, STEMS))
 
-            _report(
-                webhook_url,
-                {
-                    "task_id": task_id,
-                    "status": "ready",
-                    "stems": stem_keys,
-                    # Lets the Worker recognise the same song uploaded again.
-                    "input_sha256": input_sha256,
-                    **({"title": title} if title else {}),
-                    # The video a Spotify or Apple Music song was found as,
-                    # shown so a wrong match is obvious, and cached so
-                    # pasting that video reuses these stems.
-                    **(
-                        {
-                            "matched_youtube_id": youtube_id,
-                            "matched_title": title,
-                        }
-                        if matched
-                        else {}
-                    ),
-                },
-            )
+            with timed("report_ready"):
+                # Progress still queued is moot now; the one in flight finishes.
+                reporter.shutdown(wait=True, cancel_futures=True)
+                _report(
+                    webhook_url,
+                    {
+                        "task_id": task_id,
+                        "status": "ready",
+                        "stems": stem_keys,
+                        # Lets the Worker recognise the same song uploaded again.
+                        "input_sha256": input_sha256,
+                        **({"title": title} if title else {}),
+                        # The video a Spotify or Apple Music song was found as,
+                        # shown so a wrong match is obvious, and cached so
+                        # pasting that video reuses these stems.
+                        **(
+                            {
+                                "matched_youtube_id": youtube_id,
+                                "matched_title": title,
+                            }
+                            if matched
+                            else {}
+                        ),
+                    },
+                )
 
-        return {"task_id": task_id, "status": "complete"}
+        print(json.dumps({"task_id": task_id, "timings": timings}))
+        return {"task_id": task_id, "status": "complete", "timings": timings}
 
     except Exception as e:
+        reporter.shutdown(wait=True, cancel_futures=True)
         _report(
             webhook_url,
             {
@@ -453,6 +534,11 @@ def _separate(
             },
         )
         return {"task_id": task_id, "status": "error", "error": str(e)}
+
+    finally:
+        # Modal's cancellation of an input isn't an Exception, so it skips the
+        # handler above; don't leave its reports to mix with the next song's.
+        reporter.shutdown(wait=False, cancel_futures=True)
 
 
 def _valid_input(given: dict) -> bool:
@@ -474,7 +560,11 @@ def _valid_input(given: dict) -> bool:
     )
 
 
-@app.function(image=api_image, secrets=[webhook_secret])
+# Every song goes through this endpoint before a GPU starts, and a cold one
+# took 3–6 s to answer against ~0.65 s warm. It's a sliver of CPU, so it
+# stays up 20 minutes after a request, for ~0.2¢. (A memory snapshot saved
+# under a second on a cold start, and cost 7–10 s whenever it was retaken.)
+@app.function(image=api_image, secrets=[webhook_secret], scaledown_window=1200)
 @modal.asgi_app()
 def separate_api():
     """
@@ -495,15 +585,44 @@ def separate_api():
     Spawns the GPU job and returns immediately — the Worker must not block
     for the full separation.
     """
+    import threading
+
     from fastapi import FastAPI, Header, HTTPException
 
     web = FastAPI()
+    last_warm = 0.0
+    # FastAPI runs these handlers on a thread pool.
+    warm_lock = threading.Lock()
 
-    @web.post("/")
-    def enqueue(item: dict, authorization: str = Header("")):
+    def authorized(authorization: str) -> None:
         expected = f"Bearer {os.environ['WEBHOOK_SECRET']}"
         if not hmac.compare_digest(authorization.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="Unauthorized")
+
+    @web.get("/health")
+    def health():
+        """Nothing: a page load calls it so this container is up by the time
+        someone picks a song, rather than starting cold in front of it."""
+        return {"ok": True}
+
+    @web.post("/warm", status_code=202)
+    def warm(authorization: str = Header("")):
+        """Called when someone picks a song, so a GPU container starts while
+        it uploads. At most once a minute: a container stays up two minutes
+        after its last input, and a burst of picks shouldn't start a crowd."""
+        nonlocal last_warm
+        authorized(authorization)
+        with warm_lock:
+            now = time.monotonic()
+            if now - last_warm < 60:
+                return {"status": "warming"}
+            last_warm = now
+        Separator().warm.spawn()
+        return {"status": "warming"}
+
+    @web.post("/")
+    def enqueue(item: dict, authorization: str = Header("")):
+        authorized(authorization)
 
         try:
             task_id, webhook_url = item["task_id"], item["webhook_url"]

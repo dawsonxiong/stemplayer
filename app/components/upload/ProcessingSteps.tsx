@@ -6,12 +6,13 @@ import { usePlayerStore, type Source, type Stage } from "~/lib/store";
  *  doesn't read as a stall. */
 type Step = { id: Stage; label: string; done: string; estimate: string };
 
-// From the Modal job: a T4 that idles for 5 minutes after a run, so a cold
-// start only some of the time, then Demucs at ~25 s for a 4-minute song.
+// From the Modal job: an A10 that idles for 2 minutes after a run, and is
+// started when a song is picked, so a cold start only some of the time, then
+// ~5 s to separate, encode and store a 4-minute song.
 const ESTIMATE = {
   upload: "~5\u00a0s",
   start: "up to 30\u00a0s",
-  separate: "~30\u00a0s",
+  separate: "~8\u00a0s",
   load: "~5\u00a0s",
   lookup: "~2\u00a0s",
   fetch: "~15\u00a0s",
