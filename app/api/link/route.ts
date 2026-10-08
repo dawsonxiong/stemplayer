@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { putJob } from "~/lib/jobs.server";
 import { findCachedTask, linkCacheKey } from "~/lib/stem-cache";
 import { warmGpu } from "~/lib/warm.server";
 import { parseLink, UNSUPPORTED_LINK } from "~/lib/links";
@@ -30,17 +31,13 @@ export async function POST(request: Request) {
   if (cachedId) return Response.json({ taskId: cachedId, cached: true });
 
   const taskId = crypto.randomUUID();
-  await env.JOBS.put(
-    taskId,
-    JSON.stringify({
-      status: "uploaded",
-      link: { provider: link.provider, id: link.cacheId },
-      fetch: link.fetch,
-      ...(link.title && { title: link.title }),
-      createdAt: Date.now(),
-    }),
-    { expirationTtl: 86400 * 14 },
-  );
+  await putJob(taskId, {
+    status: "uploaded",
+    link: { provider: link.provider, id: link.cacheId },
+    fetch: link.fetch,
+    ...(link.title && { title: link.title }),
+    createdAt: Date.now(),
+  });
 
   // A GPU takes several seconds to start: let it start while the browser
   // carries on to /api/separate.

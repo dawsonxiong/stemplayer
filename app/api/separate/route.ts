@@ -1,24 +1,21 @@
 import { env } from "cloudflare:workers";
+import { getJob, putJob } from "~/lib/jobs.server";
 import { SEPARATIONS_PER_HOUR } from "~/lib/constants";
 import type { FetchSpec } from "~/lib/links.server";
-
-const TTL = { expirationTtl: 86400 * 14 };
 
 export async function POST(request: Request) {
   const { taskId } = (await request.json()) as { taskId: string };
 
-  const raw = await env.JOBS.get(taskId);
-  if (!raw) {
-    return Response.json({ error: "Task not found" }, { status: 404 });
-  }
-
   // An upload has an R2 key; a link says what the job should fetch instead.
-  const jobData = JSON.parse(raw) as {
+  const jobData = await getJob<{
     status: string;
     r2Key?: string;
     fetch?: FetchSpec;
     createdAt: number;
-  };
+  }>(taskId);
+  if (!jobData) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
 
   // Each upload gets one GPU run. Retries of this request are no-ops.
   if (jobData.status !== "uploaded") {
@@ -40,17 +37,15 @@ export async function POST(request: Request) {
   }
   await env.JOBS.put(rateKey, String(used + 1), { expirationTtl: 3600 });
 
-  await env.JOBS.put(
-    taskId,
-    JSON.stringify({ ...jobData, status: "processing", progress: 0 }),
-    TTL,
-  );
+  await putJob(taskId, { ...jobData, status: "processing", progress: 0 });
 
   // Only task metadata goes to Modal. R2 creds and the webhook secret live in
   // Modal secrets; the bearer token proves the call came from this Worker.
   // In dev, Modal can't reach localhost, so scripts/dev.mjs supplies a tunnel.
   const origin = import.meta.env.VITE_WEBHOOK_ORIGIN || new URL(request.url).origin;
 
+  // A Modal that can't be reached at all throws rather than answering, and
+  // would otherwise leave the job "processing" for good.
   const modalResponse = await fetch(env.MODAL_ENDPOINT, {
     method: "POST",
     headers: {
@@ -62,22 +57,17 @@ export async function POST(request: Request) {
       ...(jobData.fetch ?? { input_r2_key: jobData.r2Key }),
       webhook_url: `${origin}/api/webhook`,
     }),
-  });
+  }).catch((err: unknown) => err as Error);
 
-  if (!modalResponse.ok) {
+  if (modalResponse instanceof Error || !modalResponse.ok) {
     // Modal's reason, for the logs: a bad secret (401), a refused input (400)
     // and Modal itself timing out (408) all look the same to the person.
-    const reason = (await modalResponse.text().catch(() => "")).slice(0, 300);
-    console.error(`Modal refused ${taskId}: ${modalResponse.status} ${reason}`);
-    await env.JOBS.put(
-      taskId,
-      JSON.stringify({
-        ...jobData,
-        status: "error",
-        error: "Failed to start separation",
-      }),
-      TTL,
-    );
+    const reason =
+      modalResponse instanceof Error
+        ? modalResponse.message
+        : `${modalResponse.status} ${(await modalResponse.text().catch(() => "")).slice(0, 300)}`;
+    console.error(`Modal refused ${taskId}: ${reason}`);
+    await putJob(taskId, { ...jobData, status: "error", error: "Failed to start separation" });
     return Response.json({ error: "Separation failed to start" }, { status: 502 });
   }
 

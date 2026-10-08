@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { putJob } from "~/lib/jobs.server";
 import { MAX_FILE_SIZE_MB, ACCEPTED_FORMATS } from "~/lib/constants";
 import { SHA256, findCachedTask, stemCacheKey } from "~/lib/stem-cache";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   const taskId = crypto.randomUUID();
-  // The original name is kept in KV for the title. It never goes in the key,
+  // The original name is kept in the job record for the title. It never goes in the key,
   // where spaces, '#' or '?' would break the signed URL.
   const r2Key = `uploads/${taskId}/input${ext ?? ""}`;
 
@@ -44,17 +45,12 @@ export async function POST(request: Request) {
     expiresIn: 3600,
   });
 
-  // Save job metadata to KV (auto-expires in 14 days)
-  await env.JOBS.put(
-    taskId,
-    JSON.stringify({
-      status: "uploaded",
-      filename,
-      r2Key,
-      createdAt: Date.now(),
-    }),
-    { expirationTtl: 86400 * 14 },
-  );
+  await putJob(taskId, {
+    status: "uploaded",
+    filename,
+    r2Key,
+    createdAt: Date.now(),
+  });
 
   // A GPU takes several seconds to start: let it start while the song uploads.
   warmGpu();

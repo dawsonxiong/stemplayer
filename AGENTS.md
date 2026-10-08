@@ -4,7 +4,7 @@ A browser replica of the Stem Player device. Upload a song, it's separated into 
 
 Read `PLAN.md` for the full build plan and component specs.
 
-Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → KV job status → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
+Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → job record in R2 → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 
 Loading the page wakes the Modal API (`/api/wake` → its `/health`), a small container that sleeps after 20 idle minutes and takes 3–6 s to start. Picking a song also asks Modal to start a GPU container (`app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
 
@@ -38,7 +38,7 @@ modal deploy modal/app.py
 - App Router via vinext (`vinext()` in `vite.config.ts`). `app/layout.tsx` and `app/page.tsx` are server components; the player is one client tree under `app/components/Home.tsx` (`"use client"`). API endpoints are route handlers in `app/api/**/route.ts`, not server actions.
 - Cloudflare Workers — `wrangler.jsonc` points `main` at vinext's `vinext/server/fetch-handler`. Route handlers read bindings with `import { env } from "cloudflare:workers"`. wrangler + `@cloudflare/vite-plugin`.
 - `pnpm typecheck` runs `vinext typegen`, which writes `next-env.d.ts` and `.next/types` (`RouteContext<"/api/...">`). Both are generated and gitignored.
-- R2 (`AUDIO_BUCKET`) for uploads and stems; KV (`JOBS`) for job status.
+- R2 (`AUDIO_BUCKET`) for uploads, stems and job records (`stems/<taskId>/job.json`, via `app/lib/jobs.server.ts`); KV (`JOBS`) for the stem cache index and rate limits. The bucket's lifecycle rules, set on the bucket rather than in code, expire `stems/` (job records included) after 14 days and `uploads/` after 1.
 - Modal (`modal/app.py`) runs Demucs 4.0.1's `htdemucs` on an A10 through stemsep, a faster runner for it, vendored at `modal/stemsep/` from the private repo `dawsonxiong/stemsep`. Don't edit the vendored copy: change stemsep, then run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Its benchmarks and the reasons behind `SEPARATOR_CONFIG` live there.
 - Three.js via `@react-three/fiber` + drei; zustand; framer-motion; aws4fetch.
 - Tailwind v4 via `@tailwindcss/vite`. No shadcn/ui.
@@ -63,7 +63,8 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 - Verify the webhook secret in `app/api/webhook/route.ts` against `WEBHOOK_SECRET`. The same secret is the bearer token the Worker sends to Modal (Modal secret `stemplayer-webhook`).
 - The browser never talks to Modal directly.
 - Uploads go straight to R2 via presigned URL, not through the Worker.
-- KV is eventually consistent — poll with backoff.
+- `/api/status/<id>?since=<status>:<progress>` long-polls: the Worker re-reads the R2 record every 250 ms and answers when it changes (or after 20 s), and the client asks again.
+- Job records live in R2, not KV. KV caches each key per location for up to a minute, so status written where Modal's webhook lands reached a person elsewhere 7–50 s late. KV is fine for the cache index and rate limits, where staleness costs nothing.
 - Do not hand-edit `worker-configuration.d.ts`.
 
 ## Git

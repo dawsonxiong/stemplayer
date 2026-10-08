@@ -2,6 +2,7 @@
  *  by the link it came from. */
 import { AUTO_DELETE_DAYS } from "./constants";
 import type { Provider } from "./links";
+import { getJob } from "./jobs.server";
 import { generatePresignedUrl } from "./utils/presigned";
 
 export const SHA256 = /^[0-9a-f]{64}$/;
@@ -17,10 +18,11 @@ export const stemCacheKey = (hash: string) => `hash:${OUTPUT_VERSION}:${hash}`;
 export const linkCacheKey = (provider: Provider, id: string) =>
   `link:${OUTPUT_VERSION}:${provider}:${id}`;
 
-/** Whether every stem file is still in R2. KV can outlive them: a job whose
- *  files were removed early still reads as ready. Asks over the S3 API, like
- *  the browser does, because in dev the AUDIO_BUCKET binding is a local copy
- *  that Modal never writes to. Throws if R2 doesn't answer. */
+/** Whether every stem file is still in R2. The index and job record can
+ *  outlive them: a job whose files were removed early still reads as ready.
+ *  Asks over the S3 API, like the browser does, because in dev the
+ *  AUDIO_BUCKET binding is a local copy that Modal never writes to. Throws if
+ *  R2 doesn't answer. */
 async function stemsExist(env: Env, stems: Record<string, string>): Promise<boolean> {
   const found = await Promise.all(
     Object.values(stems).map(async (key) => {
@@ -38,11 +40,11 @@ async function stemsExist(env: Env, stems: Record<string, string>): Promise<bool
 export async function findCachedTask(env: Env, indexKey: string): Promise<string | null> {
   const taskId = await env.JOBS.get(indexKey);
   if (!taskId) return null;
-  const job = await env.JOBS.get<{
+  const job = await getJob<{
     status: string;
     createdAt: number;
     stems?: Record<string, string>;
-  }>(taskId, "json");
+  }>(taskId);
   if (job?.status !== "ready" || !job.stems) return null;
   if (!(Date.now() - job.createdAt < CACHE_MAX_AGE_MS)) return null;
 
