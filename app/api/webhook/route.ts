@@ -1,11 +1,12 @@
 import { env } from "cloudflare:workers";
 import { updateJob } from "~/lib/jobs.server";
+import { STEMS } from "~/lib/constants";
 import { secretMatches } from "~/lib/utils/secret";
 import { SHA256, linkCacheKey, stemCacheKey } from "~/lib/stem-cache";
 import type { Provider } from "~/lib/links";
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
-const STEM_NAMES = new Set(["vocals", "drums", "bass", "other"]);
+const STEM_NAMES = new Set(Object.keys(STEMS));
 
 export async function POST(request: Request) {
   if (!secretMatches(request.headers.get("x-webhook-secret"), env.WEBHOOK_SECRET)) {

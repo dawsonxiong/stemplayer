@@ -13,6 +13,8 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private stems: Map<StemName, StemNode> = new Map();
   private masterGain: GainNode | null = null;
+  /** After the master volume, before the speakers and the recorder. */
+  private limiter: DynamicsCompressorNode | null = null;
   /** Where the stems meet, ahead of the effects. */
   private bus: GainNode | null = null;
   private _effects: EffectsChain | null = null;
@@ -35,7 +37,17 @@ export class AudioEngine {
       this.ctx = new AudioContext();
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = this._masterVolume;
-      this.masterGain.connect(this.ctx.destination);
+      // Stems play at their true level, and a loud song's can pass full
+      // scale on their own (drums at +4.3 dBFS, soloed). This catches only
+      // what would otherwise clip: nothing at or below 0 dBFS is touched.
+      this.limiter = this.ctx.createDynamicsCompressor();
+      this.limiter.threshold.value = 0;
+      this.limiter.knee.value = 0;
+      this.limiter.ratio.value = 20;
+      this.limiter.attack.value = 0.002;
+      this.limiter.release.value = 0.1;
+      this.masterGain.connect(this.limiter);
+      this.limiter.connect(this.ctx.destination);
     }
     return this.ctx;
   }
@@ -103,7 +115,7 @@ export class AudioEngine {
     }
 
     // Set up recorder on master output
-    this._recorder = new MixRecorder(ctx, this.masterGain!);
+    this._recorder = new MixRecorder(ctx, this.limiter!);
   }
 
   play(): void {
