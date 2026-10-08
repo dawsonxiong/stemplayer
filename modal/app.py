@@ -324,11 +324,16 @@ def _prefetch(blocks):
         except BaseException as e:
             q.put(e)
 
+    def read():
+        while (item := q.get()) is not end:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+    # Started here, not on the first read: a generator's body only runs
+    # once it's asked for a block, which is after the warm-up.
     threading.Thread(target=produce, daemon=True).start()
-    while (item := q.get()) is not end:
-        if isinstance(item, BaseException):
-            raise item
-        yield item
+    return read()
 
 
 def _run_demucs(separator, wav=None, blocks=None, sink=None) -> dict:
@@ -525,10 +530,15 @@ def _separate(
                     try:
                         stems = _run_demucs(separator, blocks=blocks, sink=encoder.feed)
                     except NotStreamable:
-                        encoder.close()
-                        encoder = new_encoder()
-                        with timed("decode"):
-                            wav = _decode(separator, input_path, uploaded=not url)
+                        stems = None
+                # Outside the except, so the aborted try's GPU buffers, which
+                # its traceback would keep alive, are freed first.
+                if stems is None:
+                    encoder.close()
+                    encoder = new_encoder()
+                    with timed("decode"):
+                        wav = _decode(separator, input_path, uploaded=not url)
+                    with timed("separate_whole"):
                         stems = _run_demucs(separator, wav, sink=encoder.feed)
                 progress(80)
                 with timed("encode"):
