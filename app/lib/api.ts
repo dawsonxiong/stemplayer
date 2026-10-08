@@ -176,5 +176,7 @@ export async function fetchStemUrls(taskId: string) {
     createdAt: number | null;
     /** For a Spotify or Apple Music song, the YouTube video it was found as. */
     matchedVideo: { id: string; title: string } | null;
+    /** What each stem was stored at; missing means 1. */
+    gains?: Record<string, number>;
   }>;
 }

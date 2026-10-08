@@ -19,6 +19,10 @@ export class AudioEngine {
   /** Each stem's own level; isolation silences on top without losing it. */
   private levels: Map<StemName, number> = new Map();
   private isolated: Set<StemName> = new Set();
+  /** Undoes the level each stem was stored at (1 / its gain), so they add up
+   *  to the song again. Stems are stored 6 dB down to keep loud ones from
+   *  clipping. */
+  private restore: Map<StemName, number> = new Map();
   private _recorder: MixRecorder | null = null;
   /** Survives the gain node, which only exists once a track has been loaded. */
   private _masterVolume = 1;
@@ -36,8 +40,14 @@ export class AudioEngine {
     return this.ctx;
   }
 
-  async loadStems(urls: Record<string, string>): Promise<void> {
+  async loadStems(urls: Record<string, string>, gains: Record<string, number> = {}): Promise<void> {
     this.dispose();
+    this.restore = new Map(
+      Object.keys(urls).map((name) => {
+        const gain = gains[name];
+        return [name as StemName, gain && gain > 0 && gain <= 1 ? 1 / gain : 1];
+      }),
+    );
 
     const ctx = this.getContext();
     this.bus = ctx.createGain();
@@ -89,6 +99,7 @@ export class AudioEngine {
       analyser.connect(this.bus);
 
       this.stems.set(name, { audio, source, gain, analyser });
+      this.applyGain(name);
     }
 
     // Set up recorder on master output
@@ -134,7 +145,7 @@ export class AudioEngine {
     const stem = this.stems.get(stemName);
     if (!stem) return;
     const muted = this.isolated.size > 0 && !this.isolated.has(stemName);
-    const value = muted ? 0 : (this.levels.get(stemName) ?? 1);
+    const value = muted ? 0 : (this.levels.get(stemName) ?? 1) * (this.restore.get(stemName) ?? 1);
     const ctx = this.getContext();
     stem.gain.gain.linearRampToValueAtTime(value, ctx.currentTime + 0.02);
   }

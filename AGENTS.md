@@ -64,6 +64,7 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 - The browser never talks to Modal directly.
 - Uploads go straight to R2 via presigned URL, not through the Worker.
 - `/api/status/<id>?since=<status>:<progress>` long-polls: the Worker re-reads the R2 record every 250 ms and answers when it changes (or after 20 s), and the client asks again.
+- Stems are stored 6 dB down (`STEM_GAIN` in `modal/app.py`) and the job reports each stem's stored gain (`stem_gains` → `stemGains` on the job → `gains` from `/api/stems`). `AudioEngine` plays each stem at 1 / its gain, so the stems add up to the song. Jobs from before have no gains and play as stored.
 - Job records live in R2, not KV. KV caches each key per location for up to a minute, so status written where Modal's webhook lands reached a person elsewhere 7–50 s late. KV is fine for the cache index and rate limits, where staleness costs nothing.
 - Do not hand-edit `worker-configuration.d.ts`.
 

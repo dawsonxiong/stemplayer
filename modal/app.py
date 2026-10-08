@@ -281,6 +281,15 @@ STEMS = ("vocals", "drums", "bass", "other")
 # SDR is within 0.02 dB of demucs's.
 SEPARATOR_CONFIG = dict(overlap=0.10, batch_size=8, precision="fp16")
 
+# Stems are stored 6 dB down and turned back up by the player. Loud masters'
+# stems peak past full scale (a commercial track's drums at 1.64), and
+# demucs's way of keeping them from clipping, scaling each such stem down on
+# its own, left the drums 4.4 dB too quiet against the rest and had to wait
+# for the whole stem before encoding it. At 0.5 they fit, at a cost of 0.015
+# dB in the MP3's fidelity. A stem past ~2 is still scaled down, and its
+# reported gain says by how much, so the mix still adds up to the song.
+STEM_GAIN = 0.5
+
 UNREADABLE = "That file couldn’t be read as audio. Try another file, or a link to the song."
 
 
@@ -466,7 +475,9 @@ def _separate(
                 wav = _decode(separator, input_path, uploaded=not url)
             # The stems encode to MP3 as they come off the GPU, one LAME per
             # stem on its own core, rather than all after it.
-            encoder = StreamingMP3(STEMS, separator.samplerate, separator.audio_channels)
+            encoder = StreamingMP3(
+                STEMS, separator.samplerate, separator.audio_channels, gain=STEM_GAIN
+            )
             try:
                 with timed("warmup_wait"):
                     if warmup is not None:
@@ -501,6 +512,8 @@ def _separate(
                         "stems": stem_keys,
                         # Lets the Worker recognise the same song uploaded again.
                         "input_sha256": input_sha256,
+                        # What each stem was stored at, for the player to undo.
+                        "stem_gains": encoder.gains,
                         **({"title": title} if title else {}),
                         # The video a Spotify or Apple Music song was found as,
                         # shown so a wrong match is obvious, and cached so

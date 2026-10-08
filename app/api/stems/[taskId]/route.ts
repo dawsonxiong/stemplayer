@@ -14,6 +14,8 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     filename?: string;
     createdAt?: number;
     stems?: Record<string, string>;
+    /** What each stem was stored at. Older jobs stored them as they were. */
+    stemGains?: Record<string, number>;
   }>(taskId);
   if (!data) {
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -41,5 +43,6 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     title: data.title ?? (data.filename ? titleFromFilename(data.filename) : "Untitled"),
     createdAt: data.createdAt ?? null,
     matchedVideo: data.matchedVideo ?? null,
+    gains: data.stemGains ?? {},
   });
 }

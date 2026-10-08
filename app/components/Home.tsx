@@ -180,12 +180,12 @@ export function Home() {
         // Set before loading, so a reload retries the load and not the GPU run.
         enter("load");
         setTrackParam(taskId);
-        const { stems, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
+        const { stems, gains, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
         // A file keeps the name it was dropped with, even on a cache hit from
         // someone else's upload. A link's title is the same for everyone.
         if (source !== "file") store.setTrackTitle(title);
         store.setMatchedVideo(video);
-        await audioEngine?.loadStems(stems);
+        await audioEngine?.loadStems(stems, gains);
         // Known once the stems load; otherwise it only updates during playback.
         store.setDuration(audioEngine?.duration ?? 0);
         // A cached song keeps its original date, which is also when it expires.
@@ -229,8 +229,8 @@ export function Home() {
       setTrackParam(taskId);
 
       try {
-        const { stems, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
-        await audioEngine.loadStems(stems);
+        const { stems, gains, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
+        await audioEngine.loadStems(stems, gains);
         store.setDuration(audioEngine.duration);
         store.setTrackTitle(knownTitle ?? title);
         store.setMatchedVideo(video);
