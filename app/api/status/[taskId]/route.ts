@@ -1,14 +1,14 @@
-import { env } from "cloudflare:workers";
+import { getJob } from "~/lib/jobs.server";
 
 export async function GET(_request: Request, ctx: RouteContext<"/api/status/[taskId]">) {
   const { taskId } = await ctx.params;
-  const data = await env.JOBS.get<{
+  const data = await getJob<{
     status: string;
     progress?: number;
     error?: string;
     userError?: string;
     retryable?: boolean;
-  }>(taskId, "json");
+  }>(taskId);
   if (!data) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

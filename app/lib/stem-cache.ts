@@ -2,6 +2,7 @@
  *  by the link it came from. */
 import { AUTO_DELETE_DAYS } from "./constants";
 import type { Provider } from "./links";
+import { getJob } from "./jobs.server";
 import { generatePresignedUrl } from "./utils/presigned";
 
 export const SHA256 = /^[0-9a-f]{64}$/;
@@ -38,11 +39,11 @@ async function stemsExist(env: Env, stems: Record<string, string>): Promise<bool
 export async function findCachedTask(env: Env, indexKey: string): Promise<string | null> {
   const taskId = await env.JOBS.get(indexKey);
   if (!taskId) return null;
-  const job = await env.JOBS.get<{
+  const job = await getJob<{
     status: string;
     createdAt: number;
     stems?: Record<string, string>;
-  }>(taskId, "json");
+  }>(taskId);
   if (job?.status !== "ready" || !job.stems) return null;
   if (!(Date.now() - job.createdAt < CACHE_MAX_AGE_MS)) return null;
 

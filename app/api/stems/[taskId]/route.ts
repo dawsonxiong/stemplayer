@@ -1,16 +1,11 @@
 import { env } from "cloudflare:workers";
+import { getJob } from "~/lib/jobs.server";
 import { generatePresignedUrl } from "~/lib/utils/presigned";
 import { titleFromFilename } from "~/lib/utils/title";
 
 export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[taskId]">) {
   const { taskId } = await ctx.params;
-  const raw = await env.JOBS.get(taskId);
-
-  if (!raw) {
-    return Response.json({ error: "Not found" }, { status: 404 });
-  }
-
-  const data = JSON.parse(raw) as {
+  const data = await getJob<{
     status: string;
     /** A link's song title. Uploads only have their filename. */
     title?: string;
@@ -19,10 +14,14 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     filename?: string;
     createdAt?: number;
     stems?: Record<string, string>;
-  };
+  }>(taskId);
+  if (!data) {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
 
-  // KV is eventually consistent, so this read can lag the status poll that
-  // just saw "ready". 409 tells the client to ask again, not to give up.
+  // Only while a job from before records moved to R2 is still in KV, whose
+  // reads can lag the status poll that just saw "ready". 409 tells the client
+  // to ask again, not to give up.
   if (data.status === "uploaded" || data.status === "processing") {
     return Response.json({ error: "Stems not ready" }, { status: 409 });
   }

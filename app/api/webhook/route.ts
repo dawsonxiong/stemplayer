@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { getJob, putJob } from "~/lib/jobs.server";
 import { secretMatches } from "~/lib/utils/secret";
 import { SHA256, linkCacheKey, stemCacheKey } from "~/lib/stem-cache";
 import type { Provider } from "~/lib/links";
@@ -42,16 +43,14 @@ export async function POST(request: Request) {
     input_sha256?: string;
   };
 
-  const raw = await env.JOBS.get(task_id);
-  if (!raw) {
-    return Response.json({ error: "Task not found" }, { status: 404 });
-  }
-
-  const existing = JSON.parse(raw) as {
+  const existing = await getJob<{
     status: string;
     title?: string;
     link?: { provider: Provider; id: string };
-  };
+  }>(task_id);
+  if (!existing) {
+    return Response.json({ error: "Task not found" }, { status: 404 });
+  }
   const matchedId =
     matched_youtube_id && YOUTUBE_ID.test(matched_youtube_id) ? matched_youtube_id : null;
   const done = status === "ready" || status === "error";
@@ -61,24 +60,20 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, ignored: true });
   }
 
-  await env.JOBS.put(
-    task_id,
-    JSON.stringify({
-      ...existing,
-      status,
-      ...(progress !== undefined && { progress }),
-      ...(stems && { stems }),
-      ...(error && { error }),
-      ...(user_error && { userError: user_error.slice(0, 300) }),
-      ...(retryable === true && { retryable: true }),
-      ...(title && !existing.title && { title: title.slice(0, 200) }),
-      ...(matchedId && {
-        matchedVideo: { id: matchedId, title: (matched_title ?? "").slice(0, 200) },
-      }),
-      ...(done && { completedAt: Date.now() }),
+  await putJob(task_id, {
+    ...existing,
+    status,
+    ...(progress !== undefined && { progress }),
+    ...(stems && { stems }),
+    ...(error && { error }),
+    ...(user_error && { userError: user_error.slice(0, 300) }),
+    ...(retryable === true && { retryable: true }),
+    ...(title && !existing.title && { title: title.slice(0, 200) }),
+    ...(matchedId && {
+      matchedVideo: { id: matchedId, title: (matched_title ?? "").slice(0, 200) },
     }),
-    { expirationTtl: 86400 * 14 },
-  );
+    ...(done && { completedAt: Date.now() }),
+  });
 
   // Expires with the job, since the stems it points at go at the same time.
   if (status === "ready" && input_sha256 && SHA256.test(input_sha256)) {
