@@ -1,13 +1,32 @@
 import { MATCHED_PROVIDERS } from "~/lib/links";
 import { usePlayerStore, type Source, type Stage } from "~/lib/store";
 
-type Step = { id: Stage; label: string };
+/** `label` reads as under way, `done` as finished. `estimate` is a rough
+ *  time, shown while the step is still to come or running, so a long wait
+ *  doesn't read as a stall. */
+type Step = { id: Stage; label: string; done: string; estimate: string };
+
+// From the Modal job: a T4 that idles for 5 minutes after a run, so a cold
+// start only some of the time, then Demucs at ~25 s for a 4-minute song.
+const ESTIMATE = {
+  upload: "~5\u00a0s",
+  start: "up to 30\u00a0s",
+  separate: "~30\u00a0s",
+  load: "~5\u00a0s",
+  lookup: "~2\u00a0s",
+  fetch: "~15\u00a0s",
+};
 
 const UPLOAD_STEPS: Step[] = [
-  { id: "upload", label: "Upload" },
-  { id: "start", label: "Start GPU" },
-  { id: "separate", label: "Separate stems" },
-  { id: "load", label: "Load stems" },
+  { id: "upload", label: "Uploading", done: "Uploaded", estimate: ESTIMATE.upload },
+  { id: "start", label: "Starting GPU", done: "GPU started", estimate: ESTIMATE.start },
+  {
+    id: "separate",
+    label: "Separating stems",
+    done: "Stems separated",
+    estimate: ESTIMATE.separate,
+  },
+  { id: "load", label: "Loading stems", done: "Stems loaded", estimate: ESTIMATE.load },
 ];
 
 /** A link has nothing to upload. It's looked up first, which checks the song
@@ -15,13 +34,20 @@ const UPLOAD_STEPS: Step[] = [
  *  finding Spotify and Apple Music songs on YouTube first. */
 function stepsFor(source: Source): Step[] {
   if (source === "file") return UPLOAD_STEPS;
-  const fetch = MATCHED_PROVIDERS.includes(source) ? "Find on YouTube" : "Download audio";
+  const matched = MATCHED_PROVIDERS.includes(source);
+  // Everything but the upload is shared with a file's steps.
+  const [, start, separate, load] = UPLOAD_STEPS;
   return [
-    { id: "lookup", label: "Get song" },
-    { id: "start", label: "Start GPU" },
-    { id: "fetch", label: fetch },
-    { id: "separate", label: "Separate stems" },
-    { id: "load", label: "Load stems" },
+    { id: "lookup", label: "Getting song", done: "Song found", estimate: ESTIMATE.lookup },
+    start,
+    {
+      id: "fetch",
+      label: matched ? "Finding on YouTube" : "Downloading audio",
+      done: matched ? "Found on YouTube" : "Audio downloaded",
+      estimate: ESTIMATE.fetch,
+    },
+    separate,
+    load,
   ];
 }
 
@@ -38,7 +64,8 @@ const LABEL_CLASS: Record<StepState, string> = {
   done: "text-ink",
   active: "text-ink",
   failed: "text-magenta-ink",
-  pending: "text-ink-muted opacity-70",
+  // Muted, not faded: still 5:1 against the page.
+  pending: "text-ink-muted",
 };
 
 /** The four stages a song goes through, each lit like one of the device's
@@ -56,7 +83,7 @@ export function ProcessingSteps() {
   const current = steps.findIndex((s) => s.id === stage);
 
   return (
-    <div className="panel-in mx-auto w-full max-w-xs lg:mx-0">
+    <div className="panel-in w-full">
       <p aria-live="polite" className="sr-only">
         {failed ? `${steps[current]?.label} failed` : steps[current]?.label}
       </p>
@@ -64,14 +91,16 @@ export function ProcessingSteps() {
         {steps.map((step, i) => {
           const state: StepState =
             i < current ? "done" : i > current ? "pending" : failed ? "failed" : "active";
+          // Done steps need nothing; the upload counts up its own progress.
+          // After a failure the rest won't run, so they get no estimate.
           const detail =
-            state !== "active"
-              ? state === "failed"
-                ? "Failed"
-                : null
-              : step.id === "upload"
-                ? `${Math.round(progress)}%`
-                : null;
+            state === "failed"
+              ? "Failed"
+              : state === "done" || failed
+                ? null
+                : state === "active" && step.id === "upload"
+                  ? `${Math.round(progress)}%`
+                  : step.estimate;
 
           return (
             <li
@@ -99,10 +128,8 @@ export function ProcessingSteps() {
               <span
                 className={`text-body transition-[color,opacity] duration-500 ease-out motion-reduce:transition-none ${LABEL_CLASS[state]}`}
               >
-                {step.label}
-                <span className="sr-only">
-                  {state === "done" ? ", done" : state === "pending" ? ", waiting" : ""}
-                </span>
+                {state === "done" ? step.done : step.label}
+                {state === "pending" && <span className="sr-only">, waiting</span>}
               </span>
               {detail && (
                 <span

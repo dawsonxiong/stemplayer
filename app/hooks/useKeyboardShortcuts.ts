@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import type { AudioEngine } from "~/lib/audio/engine";
 import { cycleLoop } from "~/lib/loop";
 import { toggleEffects } from "~/lib/effects";
-import { stepSpeed, toggleIsolated } from "~/lib/mix";
+import { setPower, stepSpeed, toggleIsolated } from "~/lib/mix";
 import { usePlayerStore } from "~/lib/store";
 import type { StemName } from "~/lib/constants";
 
@@ -33,10 +33,32 @@ export function useKeyboardShortcuts(audioEngine: AudioEngine | null) {
         return;
       if (e.target instanceof HTMLButtonElement && (e.code === "Space" || e.key === "Enter"))
         return;
+      // Cmd/Ctrl/Alt combinations belong to the browser and the OS: Cmd+L is
+      // the address bar, Cmd+1 a tab switch, Alt+← back. The exception is
+      // [ and ], which many layouts can only type with Option (Mac) or AltGr
+      // (Windows reports it as Ctrl+Alt).
+      const typedWithAlt = e.key === "[" || e.key === "]";
+      if (e.metaKey) return;
+      if (e.ctrlKey && !e.altKey) return;
+      if (e.altKey && !typedWithAlt) return;
 
       const store = usePlayerStore.getState();
+      if (store.status !== "ready") return;
+
+      // Held keys repeat. Only seeking should keep going; every other
+      // shortcut is a toggle that would flip back and forth.
+      const seeking = e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (e.repeat && !seeking) return;
+
+      // P — power. Works while off, so it can switch back on.
+      if (e.key === "p" || e.key === "P") {
+        e.preventDefault();
+        setPower(audioEngine, !store.isOn);
+        return;
+      }
+
       // Off means inert, like the hardware: no playback, mixing or seeking.
-      if (store.status !== "ready" || !store.isOn) return;
+      if (!store.isOn) return;
 
       // Space — play/pause
       if (e.code === "Space") {
@@ -92,7 +114,7 @@ export function useKeyboardShortcuts(audioEngine: AudioEngine | null) {
       }
 
       // Left/Right arrow — seek
-      if (audioEngine && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      if (audioEngine && seeking) {
         e.preventDefault();
         const step = e.key === "ArrowLeft" ? -5 : 5;
         const time = Math.max(0, Math.min(audioEngine.duration, audioEngine.currentTime + step));

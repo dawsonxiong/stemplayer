@@ -80,7 +80,7 @@ export class MixRecorder {
   }
 
   get isRecording(): boolean {
-    return this.recorder != null && this.recorder.state !== "inactive";
+    return this.recorder !== null && this.recorder.state !== "inactive";
   }
 
   private getSupportedMimeType(): string {

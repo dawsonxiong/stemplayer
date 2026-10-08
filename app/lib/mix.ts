@@ -40,3 +40,14 @@ export function audibleLevels(
   }
   return out;
 }
+
+/** Powering off silences and stops, like pulling the plug. Shared by the
+ *  device's centre button, the P key and the power button on the page. */
+export function setPower(audioEngine: AudioEngine | null, on: boolean) {
+  const store = usePlayerStore.getState();
+  store.setPower(on);
+  if (!on) {
+    audioEngine?.pause();
+    store.setPlaying(false);
+  }
+}

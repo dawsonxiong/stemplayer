@@ -8,6 +8,7 @@ const SHORTCUTS: [string, string][] = [
   ["E", "Effects"],
   ["L", "Loop"],
   ["← →", "Seek"],
+  ["P", "Power"],
 ];
 
 /** A ⌘ button that shows the keyboard shortcuts, kept out of sight until
@@ -26,7 +27,7 @@ export function KeyboardShortcuts() {
         aria-controls={listId}
         aria-label="Keyboard shortcuts"
         title="Keyboard shortcuts"
-        className="btn-secondary hidden self-stretch px-3.5 aria-expanded:bg-raised pointer-fine:inline-flex"
+        className="btn-secondary btn-secondary-icon hidden aria-expanded:bg-raised pointer-fine:inline-flex"
       >
         <svg
           width="16"
@@ -47,7 +48,7 @@ export function KeyboardShortcuts() {
         <ul
           id={listId}
           aria-label="Keyboard shortcuts"
-          className="panel-in hidden w-full basis-full flex-wrap justify-center gap-x-5 gap-y-2 text-caption text-ink-muted pointer-fine:flex lg:justify-start"
+          className="panel-in hidden w-full basis-full flex-wrap gap-x-5 gap-y-2 text-caption text-ink-muted pointer-fine:flex"
         >
           {SHORTCUTS.map(([keys, action]) => (
             <li key={action} className="flex items-center gap-1.5">

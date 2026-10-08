@@ -281,7 +281,7 @@ export default function DeviceCanvas({
     // downwards and fades out in that overflow. It sits under the controls
     // that follow it (they stack above), so the overflow never blocks them.
     <div
-      className="relative z-0 w-full"
+      className="device-touch relative z-0 w-full"
       style={{
         // Starts above the scene's box, so the box begins at the ceiling.
         height: `calc(${SCENE_HEIGHT} * ${1 + EXTEND})`,
@@ -445,8 +445,8 @@ function FitZoom() {
     probe.projectionMatrix.copy(camera.projectionMatrix);
     dir.copy(camera.position).sub(controls.target).normalize();
 
-    const fits = (distance: number) => {
-      probe.position.copy(controls.target).addScaledVector(dir, distance);
+    const fits = (at: number) => {
+      probe.position.copy(controls.target).addScaledVector(dir, at);
       probe.lookAt(controls.target);
       probe.updateMatrixWorld();
       return RIM.every((p) => {
@@ -814,7 +814,23 @@ function Device({
   const isOn = usePlayerStore((s) => s.isOn);
   const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
   const controls = useThree((s) => s.controls) as { enabled: boolean } | null;
+  // OrbitControls attaches to r3f's event source (the div around the canvas,
+  // not the canvas) and sets touch-action: none on it.
+  const eventSource = useThree((s) => (s.events.connected ?? s.gl.domElement) as HTMLElement);
   const drag = useRef<DragState>(idle());
+
+  // Vertical swipes over the device scroll the page (.device-touch in
+  // app.css overrides OrbitControls' touch-action: none). A touch that lands
+  // on a control cancels that scroll, so grooves still drag in any
+  // direction. Pointer events come before touch events, so handleDown has
+  // already claimed the touch by the time touchstart arrives.
+  useEffect(() => {
+    const claim = (e: TouchEvent) => {
+      if (drag.current.mode !== "none") e.preventDefault();
+    };
+    eventSource.addEventListener("touchstart", claim, { passive: false });
+    return () => eventSource.removeEventListener("touchstart", claim);
+  }, [eventSource]);
 
   // Power and isolate fire on a timer while still held, so the device reacts
   // under your finger instead of waiting for release.

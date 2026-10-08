@@ -39,14 +39,17 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
   if (status !== "ready") return null;
 
   return (
-    <div className="panel-in flex w-full flex-col rounded-panel border border-line bg-raised">
+    // A plain section under a hairline rather than a box of its own: the
+    // transport bar is the column's one panel.
+    <div className="panel-in flex w-full flex-col border-t border-line pt-3">
       <button
         type="button"
         onClick={() => toggleEffects(audioEngine)}
         role="switch"
         aria-checked={effectsMode}
-        aria-controls={panelId}
-        className="flex items-center gap-2.5 rounded-panel px-4 py-2.5 text-body text-ink"
+        // The controls only exist while effects are on.
+        aria-controls={effectsMode ? panelId : undefined}
+        className="group flex items-center gap-2.5 py-1.5 text-body text-ink"
       >
         <svg
           width="14"
@@ -65,7 +68,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
         {/* A switch, not a disclosure: the controls show only while effects play. */}
         <span
           aria-hidden="true"
-          className={`ml-auto flex h-[18px] w-8 items-center rounded-full p-0.5 transition-colors ${effectsMode ? "bg-ink" : "bg-well"}`}
+          className={`ml-auto flex h-[18px] w-8 items-center rounded-full p-0.5 transition-colors ${effectsMode ? "bg-ink" : "bg-well group-hover:bg-line-strong"}`}
         >
           <span
             className={`size-3.5 rounded-full bg-page transition-transform duration-200 ${effectsMode ? "translate-x-3.5" : ""}`}
@@ -74,7 +77,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
       </button>
 
       {effectsMode && (
-        <div id={panelId} className="flex flex-col gap-3 px-4 pt-1 pb-4">
+        <div id={panelId} className="flex flex-col gap-3 pt-2">
           <Segmented
             label="Effect"
             options={EFFECT_NAMES}
@@ -119,7 +122,7 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
                 value={reverb.size}
                 min={EFFECTS.reverbSize.min}
                 max={EFFECTS.reverbSize.max}
-                format={(v) => `${v.toFixed(1)} s`}
+                format={(v) => `${ONE_DECIMAL.format(v)} s`}
                 onChange={(v) => update((s) => s.setReverb({ size: v }))}
               />
               <SliderRow
@@ -163,6 +166,12 @@ export function EffectsPanel({ audioEngine }: EffectsPanelProps) {
   );
 }
 
+// The reader's own decimal mark: "1,8 s" in much of Europe.
+const ONE_DECIMAL = new Intl.NumberFormat(undefined, {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 function formatHz(hz: number) {
-  return hz >= 1000 ? `${(hz / 1000).toFixed(1)} kHz` : `${Math.round(hz)} Hz`;
+  return hz >= 1000 ? `${ONE_DECIMAL.format(hz / 1000)} kHz` : `${Math.round(hz)} Hz`;
 }

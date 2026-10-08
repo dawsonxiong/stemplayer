@@ -28,7 +28,7 @@ export function Segmented<T extends string | number>({
             type="button"
             aria-pressed={selected}
             onClick={() => onChange(option)}
-            className={`flex-1 rounded-full px-1.5 py-1 tabular-nums transition-colors ${selected ? "bg-ink text-page" : "text-ink-muted hover:text-ink"}`}
+            className={`flex-1 rounded-full px-1.5 py-1 tabular-nums transition-colors ${selected ? "text-ink inset-ring inset-ring-ink" : "text-ink-muted hover:text-ink"}`}
           >
             {format(option)}
           </button>
