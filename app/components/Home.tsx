@@ -116,11 +116,12 @@ export function Home() {
         store.setProcessingProgress(0);
       };
 
-      /** Starts the GPU job and waits for it, lighting each step as it goes. */
-      const separate = async (taskId: string) => {
+      /** Starts the GPU job (unless `started` already has) and waits for it,
+       *  lighting each step as it goes. */
+      const separate = async (taskId: string, started = triggerSeparation(taskId)) => {
         enter("start");
         store.setStatus("processing");
-        await triggerSeparation(taskId);
+        await started;
 
         try {
           await pollStatus(taskId, (progress) => {
@@ -165,15 +166,19 @@ export function Home() {
           store.setStatus("processing");
           // The lookup is usually instant, which flashed the step past unread.
           // Hold it long enough to see; a slow lookup isn't held any longer.
-          const [ticket] = await Promise.all([
-            requestLinkTask(input.url),
-            new Promise((r) => setTimeout(r, MIN_LOOKUP_MS)),
-          ]);
+          // Only the step is held: the job starts as soon as there's a task.
+          const shown = new Promise((r) => setTimeout(r, MIN_LOOKUP_MS));
+          const ticket = await requestLinkTask(input.url);
           taskId = ticket.taskId;
           store.setTaskId(taskId);
           if (!("cached" in ticket)) {
             if (ticket.title) store.setTrackTitle(ticket.title);
-            await separate(taskId);
+            const started = triggerSeparation(taskId);
+            started.catch(() => {}); // reported by separate, after the hold
+            await shown;
+            await separate(taskId, started);
+          } else {
+            await shown;
           }
         }
 
