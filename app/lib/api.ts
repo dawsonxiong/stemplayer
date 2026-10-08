@@ -116,8 +116,22 @@ export async function triggerSeparation(taskId: string) {
   return res.json();
 }
 
+/** What loading a finished job's stems takes, from /api/stems or from the
+ *  status poll that saw it finish. */
+export type StemsToLoad = {
+  stems: Record<string, string>;
+  title: string;
+  createdAt: number | null;
+  /** For a Spotify or Apple Music song, the YouTube video it was found as. */
+  matchedVideo: { id: string; title: string } | null;
+  /** What each stem was stored at; missing means 1. */
+  gains?: Record<string, number>;
+};
+
 interface JobStatus {
   status: "uploaded" | "processing" | "ready" | "error";
+  /** With "ready": the stems to load, so there's no second request. */
+  load?: StemsToLoad;
   progress?: number;
   error?: string;
   userError?: string;
@@ -183,15 +197,7 @@ export async function fetchStemUrls(taskId: string) {
   }
   if (res.status === 404) throw new TrackNotFoundError("Stems not found");
   if (!res.ok) throw new Error(`Failed to fetch stem URLs (${res.status})`);
-  return res.json() as Promise<{
-    stems: Record<string, string>;
-    title: string;
-    createdAt: number | null;
-    /** For a Spotify or Apple Music song, the YouTube video it was found as. */
-    matchedVideo: { id: string; title: string } | null;
-    /** What each stem was stored at; missing means 1. */
-    gains?: Record<string, number>;
-  }>;
+  return res.json() as Promise<StemsToLoad>;
 }
 
 let lastWarm = 0;

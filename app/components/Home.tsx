@@ -124,7 +124,7 @@ export function Home() {
         await started;
 
         try {
-          await pollStatus(taskId, (progress) => {
+          return await pollStatus(taskId, (progress) => {
             // The job's first progress report means the GPU is up and working.
             // For a link it then fetches the song, done when it reports 15.
             const now = usePlayerStore.getState().stage;
@@ -144,6 +144,8 @@ export function Home() {
       try {
         enter(stage);
         let taskId: string;
+        // A fresh split's last status says what to load; a cached one asks.
+        let finished: Awaited<ReturnType<typeof separate>> | undefined;
 
         if ("file" in input) {
           store.setStatus("uploading");
@@ -158,7 +160,7 @@ export function Home() {
             await uploadFileToR2(ticket.uploadUrl, input.file, (progress) => {
               store.setProcessingProgress(progress);
             });
-            await separate(taskId);
+            finished = await separate(taskId);
           } else {
             store.setStatus("processing");
           }
@@ -176,7 +178,7 @@ export function Home() {
             const started = triggerSeparation(taskId);
             started.catch(() => {}); // reported by separate, after the hold
             await shown;
-            await separate(taskId, started);
+            finished = await separate(taskId, started);
           } else {
             await shown;
           }
@@ -185,7 +187,13 @@ export function Home() {
         // Set before loading, so a reload retries the load and not the GPU run.
         enter("load");
         setTrackParam(taskId);
-        const { stems, gains, title, createdAt, matchedVideo: video } = await fetchStemUrls(taskId);
+        const {
+          stems,
+          gains,
+          title,
+          createdAt,
+          matchedVideo: video,
+        } = finished?.load ?? (await fetchStemUrls(taskId));
         // A file keeps the name it was dropped with, even on a cache hit from
         // someone else's upload. A link's title is the same for everyone.
         if (source !== "file") store.setTrackTitle(title);

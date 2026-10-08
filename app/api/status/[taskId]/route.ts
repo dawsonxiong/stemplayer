@@ -1,6 +1,7 @@
 import { getJob } from "~/lib/jobs.server";
+import { type FinishedJob, stemsToLoad } from "~/lib/stems.server";
 
-type Job = {
+type Job = FinishedJob & {
   status: string;
   progress?: number;
   error?: string;
@@ -36,5 +37,10 @@ export async function GET(request: Request, ctx: RouteContext<"/api/status/[task
   // Only what polling needs. A cache hit shares another upload's task, so its
   // filename and storage keys stay on the server.
   const { status, progress, error, userError, retryable } = data;
-  return Response.json({ status, progress, error, userError, retryable });
+  // Ready: what /api/stems would say too, so loading can start at once.
+  const load =
+    status === "ready" && data.stems
+      ? await stemsToLoad({ ...data, stems: data.stems })
+      : undefined;
+  return Response.json({ status, progress, error, userError, retryable, load });
 }
