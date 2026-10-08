@@ -13,3 +13,10 @@ export function warmGpu(): void {
     }).catch(() => {}),
   );
 }
+
+/** Wakes the Modal API, a small CPU container that every song goes through
+ *  first and that takes 3–6 s to start cold. Called when the page loads, so
+ *  it's up by the time someone picks a song. */
+export function wakeModalApi(): void {
+  after(fetch(new URL("health", `${env.MODAL_ENDPOINT}/`)).catch(() => {}));
+}

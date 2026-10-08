@@ -6,7 +6,7 @@ Read `PLAN.md` for the full build plan and component specs.
 
 Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → KV job status → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 
-Picking a song also asks Modal to start a GPU container (`app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
+Loading the page wakes the Modal API (`/api/wake` → its `/health`), a small container that sleeps after 20 idle minutes and takes 3–6 s to start. Picking a song also asks Modal to start a GPU container (`app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
 
 A song link skips the upload: `/api/link` parses it (`app/lib/links.ts`) and looks it up (`app/lib/links.server.ts`) → `/api/separate` → the Modal job fetches the audio with yt-dlp, then carries on as above.
 

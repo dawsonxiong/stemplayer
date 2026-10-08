@@ -261,6 +261,12 @@ export function Home() {
     void openTrack(taskId, findTrack(taskId)?.title);
   }, [openTrack]);
 
+  // The first song's request goes through a server that sleeps when idle.
+  // Waking it now means it's up by the time a song is picked.
+  useEffect(() => {
+    void fetch("/api/wake", { method: "POST" }).catch(() => {});
+  }, []);
+
   useEffect(() => {
     document.title =
       trackTitle && status === "ready" ? `${trackTitle} – Stem Player` : "Stem Player";

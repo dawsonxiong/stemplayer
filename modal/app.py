@@ -599,6 +599,12 @@ def separate_api():
         if not hmac.compare_digest(authorization.encode(), expected.encode()):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
+    @web.get("/health")
+    def health():
+        """Nothing: a page load calls it so this container is up by the time
+        someone picks a song, rather than starting cold in front of it."""
+        return {"ok": True}
+
     @web.post("/warm", status_code=202)
     def warm(authorization: str = Header("")):
         """Called when someone picks a song, so a GPU container starts while
