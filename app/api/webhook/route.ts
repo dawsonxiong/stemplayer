@@ -1,10 +1,12 @@
 import { env } from "cloudflare:workers";
 import { updateJob } from "~/lib/jobs.server";
+import { STEMS } from "~/lib/constants";
 import { secretMatches } from "~/lib/utils/secret";
 import { SHA256, linkCacheKey, stemCacheKey } from "~/lib/stem-cache";
 import type { Provider } from "~/lib/links";
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+const STEM_NAMES = new Set(Object.keys(STEMS));
 
 export async function POST(request: Request) {
   if (!secretMatches(request.headers.get("x-webhook-secret"), env.WEBHOOK_SECRET)) {
@@ -23,6 +25,7 @@ export async function POST(request: Request) {
     matched_youtube_id,
     matched_title,
     input_sha256,
+    stem_gains,
   } = (await request.json()) as {
     task_id: string;
     status: string;
@@ -41,11 +44,21 @@ export async function POST(request: Request) {
     matched_title?: string;
     /** Hash of the audio the job downloaded, for recognising re-uploads. */
     input_sha256?: string;
+    /** What each stem was stored at, which the player undoes. */
+    stem_gains?: Record<string, number>;
   };
 
   const matchedId =
     matched_youtube_id && YOUTUBE_ID.test(matched_youtube_id) ? matched_youtube_id : null;
   const done = status === "ready" || status === "error";
+  // Only sane gains for known stems: the player divides by them.
+  const stemGains =
+    stem_gains &&
+    Object.fromEntries(
+      Object.entries(stem_gains).filter(
+        ([name, gain]) => STEM_NAMES.has(name) && typeof gain === "number" && gain > 0 && gain <= 1,
+      ),
+    );
 
   let ignored = false;
   const existing = await updateJob<{
@@ -68,6 +81,7 @@ export async function POST(request: Request) {
       ...(matchedId && {
         matchedVideo: { id: matchedId, title: (matched_title ?? "").slice(0, 200) },
       }),
+      ...(stemGains && { stemGains }),
       ...(done && { completedAt: Date.now() }),
     };
   });

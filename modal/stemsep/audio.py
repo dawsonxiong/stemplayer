@@ -6,10 +6,11 @@ I/O backends, and encoders in separate processes really do run side by side.
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from typing import Iterable
+from typing import Callable, Iterable, Iterator
 
 import numpy as np
 import torch
@@ -46,6 +47,53 @@ def decode(path: str, samplerate: int = 44100, channels: int = 2) -> torch.Tenso
     else:
         raise DecodeError(f"can't make {channels} channels from {src}")
     return torch.from_numpy(frames.T.copy())
+
+
+class NotStreamable(Exception):
+    """libsndfile can't read this file as `decode` would, so it has to be
+    decoded whole, by `decode`. Raised before the first block if that's
+    known up front, partway if a read fails, or after the last if the read
+    came up short."""
+
+
+def decode_blocks(
+    path: str, samplerate: int = 44100, channels: int = 2, seconds: float = 2.0
+) -> Iterator[torch.Tensor]:
+    """`decode`, a block of `seconds` at a time, for `Separator.
+    separate_stream`, so separating can start before decoding ends. Only
+    what libsndfile reads as `decode` would (see `_read_soundfile`)."""
+    import soundfile as sf
+
+    try:
+        raw = open(path, "rb")
+        f = sf.SoundFile(reads := _Reads(raw))
+    except Exception as e:
+        raise NotStreamable(str(e)) from e
+    with raw, f:
+        if f.samplerate != samplerate or f.channels > 2:
+            raise NotStreamable(f"{f.samplerate} Hz, {f.channels} channels")
+        got, size = 0, int(seconds * samplerate)
+        while True:
+            # Not f.blocks(), which goes by the frame count in the header and
+            # yields whole blocks even when a read comes up short, as one of
+            # a truncated MP3 does: the rest of the block is left over from
+            # the one before.
+            try:
+                block = f.read(size, dtype="float32", always_2d=True)
+            except Exception as e:  # a read that fails partway: start again with decode
+                raise NotStreamable(str(e)) from e
+            if not len(block):
+                break
+            got += len(block)
+            if f.channels == 1 and channels > 1:
+                block = np.repeat(block, channels, axis=1)
+            elif channels == 1 and f.channels > 1:
+                block = block.mean(axis=1, keepdims=True)
+            yield torch.from_numpy(block.T.copy())
+        if not got:
+            raise NotStreamable("no audio")
+        if f.format == "MP3" and os.fstat(raw.fileno()).st_size - reads.end > 4096:
+            raise NotStreamable("libsndfile stopped short of the end")
 
 
 def _read_soundfile(path: str, samplerate: int) -> np.ndarray | None:
@@ -164,13 +212,33 @@ def _lame(samplerate: int, channels: int, bitrate: int, quality: int):
     return encoder
 
 
+def stored_gain(peak: float, gain: float = 1.0) -> float:
+    """What a stem with this peak ends up scaled by, stored at `gain`: the
+    gain itself, or less where `_rescale` turns it down further to keep it
+    from clipping. Playing it back at 1 / this restores its level.
+
+    A stem with a NaN in it, as from a float WAV that has one, reports
+    `gain`: NaN isn't valid JSON, and a report carrying it never gets sent."""
+    if math.isnan(peak):
+        return gain
+    return gain / max(1.01 * peak * gain, 1.0)
+
+
 def mp3_bytes(
-    wav: torch.Tensor, samplerate: int, bitrate: int = 192, quality: int = QUALITY
+    wav: torch.Tensor,
+    samplerate: int,
+    bitrate: int = 192,
+    quality: int = QUALITY,
+    gain: float = 1.0,
 ) -> bytes:
     """[channels, length] float audio as CBR MP3, encoded in process with
     lameenc, as `demucs.audio.save_audio` does. lameenc releases the GIL, so
-    stems encode in parallel on threads."""
-    wav = _rescale(wav.float())
+    stems encode in parallel on threads.
+
+    `gain` scales it first: stored 6 dB down (0.5), a stem can peak at
+    almost 2 before it needs `_rescale`, and loud songs' stems often do
+    exceed 1. `stored_gain` says what it was scaled by in the end."""
+    wav = _rescale(wav.float() * gain)
     encoder = _lame(samplerate, wav.shape[0], bitrate, quality)
     return bytes(encoder.encode(_to_int16(wav).tobytes()) + encoder.flush())
 
@@ -201,11 +269,21 @@ class StreamingMP3:
         channels: int,
         bitrate: int = 192,
         quality: int = QUALITY,
+        gain: float = 1.0,
+        on_data: Callable[[str, bytes], None] | None = None,
     ):
         import queue
         import threading
 
         self.samplerate, self.bitrate, self.quality = samplerate, bitrate, quality
+        self.gain = gain
+        # Called on the encoder's thread with each piece of a stem's MP3 as
+        # it's made, so it can be uploading already. For a stem in `rescaled`
+        # after finish, what it was handed is void: finish's bytes replace it.
+        self.on_data = on_data
+        self.rescaled: set[str] = set()
+        # Each stem's stored_gain, once finish has run.
+        self.gains: dict[str, float] = {}
         self._queues = {n: queue.Queue() for n in names}
         self._data: dict[str, bytearray] = {}
         self._peak = {n: 0.0 for n in self._queues}
@@ -230,12 +308,18 @@ class StreamingMP3:
             while (segment := self._queues[name].get()) is not None:
                 if self._needs_rescale(name):
                     continue  # this encoding will be thrown away; stop paying for it
-                segment = segment.float()
+                segment = segment.float() * self.gain
                 self._peak[name] = max(self._peak[name], segment.abs().max().item())
                 if not self._needs_rescale(name):
-                    data += encoder.encode(_to_int16(segment).tobytes())
+                    chunk = encoder.encode(_to_int16(segment).tobytes())
+                    data += chunk
+                    if self.on_data and chunk:
+                        self.on_data(name, bytes(chunk))
             if not self._needs_rescale(name):
-                data += encoder.flush()
+                chunk = encoder.flush()
+                data += chunk
+                if self.on_data and chunk:
+                    self.on_data(name, bytes(chunk))
                 self._data[name] = data
         except BaseException as e:  # surfaced by finish
             self._errors.append(e)
@@ -267,7 +351,7 @@ class StreamingMP3:
         # the encoders still finishing the rest. Loud masters often have one:
         # a commercial track's drums peaked at 1.64.
         def encode(name: str) -> bytes:
-            return mp3_bytes(stems[name], self.samplerate, self.bitrate, self.quality)
+            return mp3_bytes(stems[name], self.samplerate, self.bitrate, self.quality, self.gain)
 
         with ThreadPoolExecutor(len(self._queues)) as pool:
             early = {n: pool.submit(encode, n) for n in self._queues if self._needs_rescale(n)}
@@ -284,6 +368,13 @@ class StreamingMP3:
             }
             out = {n: bytes(d) for n, d in self._data.items() if not self._needs_rescale(n)}
             out.update({n: f.result() for n, f in {**early, **late}.items()})
+        self.rescaled = set(early) | set(late)
+        # A stem that stopped early stopped tracking its peak too.
+        self.gains = {
+            n: stored_gain(stems[n].abs().max().item() if n in early or n in late else
+                           self._peak[n] / self.gain, self.gain)
+            for n in self._queues
+        }  # fmt: skip
         return out
 
 

@@ -281,6 +281,15 @@ STEMS = ("vocals", "drums", "bass", "other")
 # SDR is within 0.02 dB of demucs's.
 SEPARATOR_CONFIG = dict(overlap=0.10, batch_size=8, precision="fp16")
 
+# Stems are stored 6 dB down and turned back up by the player. Loud masters'
+# stems peak past full scale (a commercial track's drums at 1.64), and
+# demucs's way of keeping them from clipping, scaling each such stem down on
+# its own, left the drums 4.4 dB too quiet against the rest and had to wait
+# for the whole stem before encoding it. At 0.5 they fit, at a cost of 0.015
+# dB in the MP3's fidelity. A stem past ~2 is still scaled down, and its
+# reported gain says by how much, so the mix still adds up to the song.
+STEM_GAIN = 0.5
+
 UNREADABLE = "That file couldn’t be read as audio. Try another file, or a link to the song."
 
 
@@ -298,11 +307,47 @@ def _decode(separator, input_path: str, uploaded: bool):
         raise
 
 
-def _run_demucs(separator, wav, sink=None) -> dict:
+def _prefetch(blocks):
+    """`blocks`, produced on a thread as fast as it can, so the next is
+    usually ready when it's asked for. An exception reaches the reader."""
+    import queue
+    import threading
+
+    q = queue.Queue()
+    end = object()
+
+    def produce():
+        try:
+            for block in blocks:
+                q.put(block)
+            q.put(end)
+        except BaseException as e:
+            q.put(e)
+
+    def read():
+        while (item := q.get()) is not end:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+
+    # Started here, not on the first read: a generator's body only runs
+    # once it's asked for a block, which is after the warm-up.
+    threading.Thread(target=produce, daemon=True).start()
+    return read()
+
+
+def _run_demucs(separator, wav=None, blocks=None, sink=None) -> dict:
     """Split a song into its stems with the separator's model, on whichever
-    device it's on, handing each stretch to `sink` as it's finished."""
+    device it's on, handing each stretch to `sink` as it's finished. The
+    song is `wav`, or `blocks` of it as they're decoded."""
+    from stemsep.audio import NotStreamable
+
     try:
+        if blocks is not None:
+            return separator.separate_stream(blocks, sink=sink)
         return separator.separate(wav, sink=sink)
+    except NotStreamable:
+        raise  # the decoder's, not the GPU's: decode it whole instead
     except Exception:
         # A GPU error can leave CUDA unusable for the rest of the process, and
         # the model stays loaded for later songs. So this container finishes
@@ -321,9 +366,12 @@ def _run_demucs(separator, wav, sink=None) -> dict:
     # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
     cpu=4.0,
     timeout=900,
-    # An idle A10 costs ~0.04¢ a second, so a 5-minute wait for the next song
-    # cost 50 songs' worth. A cold start is now ~7 s to ready, so wait 2 minutes.
-    scaledown_window=120,
+    # An idle A10 costs ~0.04¢ a second, more than a song every 6 seconds:
+    # the wait after the last song was most of the bill. A GPU now starts as
+    # soon as a song is picked, so a cold one costs ~1–2 s by the time it's
+    # needed. A minute covers songs split back to back; after listening to
+    # one, the next would have found the GPU gone anyway.
+    scaledown_window=60,
     memory=8192,
     secrets=[modal.Secret.from_name("r2-creds"), webhook_secret, apify_secret],
     # A cold start restores torch and the loaded model from a snapshot
@@ -392,7 +440,7 @@ def _separate(
     match: dict | None = None,
 ):
     import boto3
-    from stemsep.audio import StreamingMP3
+    from stemsep.audio import NotStreamable, StreamingMP3, decode_blocks
 
     # Seconds per stage, logged with each job and returned to the caller.
     timings: dict[str, float] = {}
@@ -462,17 +510,39 @@ def _separate(
                 input_sha256 = _sha256(input_path)
             progress(15)
 
-            with timed("decode"):
-                wav = _decode(separator, input_path, uploaded=not url)
             # The stems encode to MP3 as they come off the GPU, one LAME per
             # stem on its own core, rather than all after it.
-            encoder = StreamingMP3(STEMS, separator.samplerate, separator.audio_channels)
+            def new_encoder():
+                return StreamingMP3(
+                    STEMS, separator.samplerate, separator.audio_channels, gain=STEM_GAIN
+                )
+
+            # Most songs (MP3, WAV, FLAC, Ogg) decode while they separate,
+            # on a thread from now, so a new container's warm-up overlaps it
+            # too. Anything else, or anything libsndfile would read short,
+            # is decoded whole first.
+            blocks = _prefetch(
+                decode_blocks(input_path, separator.samplerate, separator.audio_channels)
+            )
+            encoder = new_encoder()
             try:
                 with timed("warmup_wait"):
                     if warmup is not None:
                         warmup.join()
                 with timed("separate"):
-                    stems = _run_demucs(separator, wav, sink=encoder.feed)
+                    try:
+                        stems = _run_demucs(separator, blocks=blocks, sink=encoder.feed)
+                    except NotStreamable:
+                        stems = None
+                # Outside the except, so the aborted try's GPU buffers, which
+                # its traceback would keep alive, are freed first.
+                if stems is None:
+                    encoder.close()
+                    encoder = new_encoder()
+                    with timed("decode"):
+                        wav = _decode(separator, input_path, uploaded=not url)
+                    with timed("separate_whole"):
+                        stems = _run_demucs(separator, wav, sink=encoder.feed)
                 progress(80)
                 with timed("encode"):
                     mp3s = encoder.finish(stems)
@@ -501,6 +571,8 @@ def _separate(
                         "stems": stem_keys,
                         # Lets the Worker recognise the same song uploaded again.
                         "input_sha256": input_sha256,
+                        # What each stem was stored at, for the player to undo.
+                        "stem_gains": encoder.gains,
                         **({"title": title} if title else {}),
                         # The video a Spotify or Apple Music song was found as,
                         # shown so a wrong match is obvious, and cached so
@@ -608,8 +680,8 @@ def separate_api():
     @web.post("/warm", status_code=202)
     def warm(authorization: str = Header("")):
         """Called when someone picks a song, so a GPU container starts while
-        it uploads. At most once a minute: a container stays up two minutes
-        after its last input, and a burst of picks shouldn't start a crowd."""
+        it uploads. At most once a minute: a container stays up a minute after
+        its last input, and a burst of picks shouldn't start a crowd."""
         nonlocal last_warm
         authorized(authorization)
         with warm_lock:

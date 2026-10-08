@@ -6,7 +6,7 @@ import { usePlayerStore, type Source, type Stage } from "~/lib/store";
  *  doesn't read as a stall. */
 type Step = { id: Stage; label: string; done: string; estimate: string };
 
-// From the Modal job: an A10 that idles for 2 minutes after a run, and is
+// From the Modal job: an A10 that idles for a minute after a run, and is
 // started when a song is picked, so a cold start only some of the time, then
 // ~5 s to separate, encode and store a 4-minute song.
 const ESTIMATE = {

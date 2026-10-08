@@ -29,10 +29,24 @@ async function failure(res: Response, fallback: string): Promise<Error> {
   return new Error(body.error || `${fallback} (${res.status})`);
 }
 
-/** SHA-256 of the file's bytes, so a song split before is recognised. */
-export async function hashFile(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+const hashes = new WeakMap<File, Promise<string>>();
+
+/** SHA-256 of the file's bytes, so a song split before is recognised. Worked
+ *  out once per file, and started as soon as it's picked (see UploadZone), so
+ *  a big WAV's isn't waited for after Split. */
+export function hashFile(file: File): Promise<string> {
+  let hash = hashes.get(file);
+  if (!hash) {
+    hash = file.arrayBuffer().then(async (bytes) => {
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+    });
+    // Picked and never split: nobody else will look at a failure. Forget it,
+    // so trying the same file again hashes it again.
+    hash.catch(() => hashes.delete(file));
+    hashes.set(file, hash);
+  }
+  return hash;
 }
 
 /** Either a fresh task to upload into, or the finished task for the same song. */
@@ -103,8 +117,22 @@ export async function triggerSeparation(taskId: string) {
   return res.json();
 }
 
+/** What loading a finished job's stems takes, from /api/stems or from the
+ *  status poll that saw it finish. */
+export type StemsToLoad = {
+  stems: Record<string, string>;
+  title: string;
+  createdAt: number | null;
+  /** For a Spotify or Apple Music song, the YouTube video it was found as. */
+  matchedVideo: { id: string; title: string } | null;
+  /** What each stem was stored at; missing means 1. */
+  gains?: Record<string, number>;
+};
+
 interface JobStatus {
   status: "uploaded" | "processing" | "ready" | "error";
+  /** With "ready": the stems to load, so there's no second request. */
+  load?: StemsToLoad;
   progress?: number;
   error?: string;
   userError?: string;
@@ -170,11 +198,15 @@ export async function fetchStemUrls(taskId: string) {
   }
   if (res.status === 404) throw new TrackNotFoundError("Stems not found");
   if (!res.ok) throw new Error(`Failed to fetch stem URLs (${res.status})`);
-  return res.json() as Promise<{
-    stems: Record<string, string>;
-    title: string;
-    createdAt: number | null;
-    /** For a Spotify or Apple Music song, the YouTube video it was found as. */
-    matchedVideo: { id: string; title: string } | null;
-  }>;
+  return res.json() as Promise<StemsToLoad>;
+}
+
+let lastWarm = 0;
+
+/** Starts a GPU for a song that's been picked but not yet split, so it's up
+ *  sooner. Once a minute at most: a link field calls this as it's typed. */
+export function warmGpu(): void {
+  if (Date.now() - lastWarm < 60_000) return;
+  lastWarm = Date.now();
+  void fetch("/api/warm", { method: "POST" }).catch(() => {});
 }

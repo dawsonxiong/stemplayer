@@ -6,7 +6,7 @@ Read `PLAN.md` for the full build plan and component specs.
 
 Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → job record in R2 → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 
-Loading the page wakes the Modal API (`/api/wake` → its `/health`), a small container that sleeps after 20 idle minutes and takes 3–6 s to start. Picking a song also asks Modal to start a GPU container (`app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
+Loading the page wakes the Modal API (`/api/wake` → its `/health`), a small container that sleeps after 20 idle minutes and takes 3–6 s to start. Picking a song (choosing, dropping or pasting it, before Split) also asks Modal to start a GPU container (`/api/warm` → `app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the person presses Split and the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
 
 A song link skips the upload: `/api/link` parses it (`app/lib/links.ts`) and looks it up (`app/lib/links.server.ts`) → `/api/separate` → the Modal job fetches the audio with yt-dlp, then carries on as above.
 
@@ -64,6 +64,7 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 - The browser never talks to Modal directly.
 - Uploads go straight to R2 via presigned URL, not through the Worker.
 - `/api/status/<id>?since=<status>:<progress>` long-polls: the Worker re-reads the R2 record every 250 ms and answers when it changes (or after 20 s), and the client asks again.
+- Stems are stored 6 dB down (`STEM_GAIN` in `modal/app.py`) and the job reports each stem's stored gain (`stem_gains` → `stemGains` on the job → `gains` from `/api/stems`). `AudioEngine` plays each stem at 1 / its gain, so the stems add up to the song. Jobs from before have no gains and play as stored.
 - Job records live in R2, not KV. KV caches each key per location for up to a minute, so status written where Modal's webhook lands reached a person elsewhere 7–50 s late. KV is fine for the cache index and rate limits, where staleness costs nothing.
 - Do not hand-edit `worker-configuration.d.ts`.
 

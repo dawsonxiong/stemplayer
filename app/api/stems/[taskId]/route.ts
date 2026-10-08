@@ -1,20 +1,9 @@
-import { env } from "cloudflare:workers";
 import { getJob } from "~/lib/jobs.server";
-import { generatePresignedUrl } from "~/lib/utils/presigned";
-import { titleFromFilename } from "~/lib/utils/title";
+import { type FinishedJob, stemsToLoad } from "~/lib/stems.server";
 
 export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[taskId]">) {
   const { taskId } = await ctx.params;
-  const data = await getJob<{
-    status: string;
-    /** A link's song title. Uploads only have their filename. */
-    title?: string;
-    /** For a Spotify or Apple Music song, the YouTube video it was found as. */
-    matchedVideo?: { id: string; title: string };
-    filename?: string;
-    createdAt?: number;
-    stems?: Record<string, string>;
-  }>(taskId);
+  const data = await getJob<FinishedJob>(taskId);
   if (!data) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
@@ -29,17 +18,5 @@ export async function GET(_request: Request, ctx: RouteContext<"/api/stems/[task
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  const entries = await Promise.all(
-    Object.entries(data.stems).map(
-      async ([stem, key]) =>
-        [stem, await generatePresignedUrl({ env, key, expiresIn: 7200 })] as const,
-    ),
-  );
-
-  return Response.json({
-    stems: Object.fromEntries(entries),
-    title: data.title ?? (data.filename ? titleFromFilename(data.filename) : "Untitled"),
-    createdAt: data.createdAt ?? null,
-    matchedVideo: data.matchedVideo ?? null,
-  });
+  return Response.json(await stemsToLoad({ ...data, stems: data.stems }));
 }
