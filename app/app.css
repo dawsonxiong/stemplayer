@@ -18,9 +18,9 @@
   --text-display--letter-spacing: -0.01em;
   /* A loaded song's title on phones, where it heads the page alone above
      the device. Wide screens use text-display beside the device. */
-  --text-headline: 1.75rem;
-  --text-headline--line-height: 1.2;
-  --text-headline--letter-spacing: -0.015em;
+  --text-headline: 1.375rem;
+  --text-headline--line-height: 1.25;
+  --text-headline--letter-spacing: -0.01em;
   /* Anything read as a sentence: buttons, list items, notices. */
   --text-body: 0.875rem;
   --text-body--line-height: 1.5;
