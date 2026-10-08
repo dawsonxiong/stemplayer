@@ -1,4 +1,4 @@
-import { POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
+import { POLL_FAST_MS, POLL_INTERVAL_MS, POLL_MAX_INTERVAL_MS, POLL_TIMEOUT_MS } from "./constants";
 
 /** How long a KV read can be served from an edge cache before it refreshes. */
 const KV_CACHE_MS = 60_000;
@@ -113,12 +113,15 @@ export async function pollStatus(
   taskId: string,
   onProgress?: (progress: number) => void,
 ): Promise<JobStatus> {
-  const deadline = Date.now() + POLL_TIMEOUT_MS;
+  const start = Date.now();
+  const deadline = start + POLL_TIMEOUT_MS;
   let interval = POLL_INTERVAL_MS;
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, interval));
-    interval = Math.min(interval * 1.25, POLL_MAX_INTERVAL_MS);
+    if (Date.now() - start > POLL_FAST_MS) {
+      interval = Math.min(interval * 1.25, POLL_MAX_INTERVAL_MS);
+    }
 
     const res = await fetch(`/api/status/${taskId}`);
     // KV is eventually consistent: a fresh key can 404 for a moment.
