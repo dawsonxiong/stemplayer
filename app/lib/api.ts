@@ -29,10 +29,23 @@ async function failure(res: Response, fallback: string): Promise<Error> {
   return new Error(body.error || `${fallback} (${res.status})`);
 }
 
-/** SHA-256 of the file's bytes, so a song split before is recognised. */
-export async function hashFile(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+const hashes = new WeakMap<File, Promise<string>>();
+
+/** SHA-256 of the file's bytes, so a song split before is recognised. Worked
+ *  out once per file, and started as soon as it's picked (see UploadZone), so
+ *  a big WAV's isn't waited for after Split. */
+export function hashFile(file: File): Promise<string> {
+  let hash = hashes.get(file);
+  if (!hash) {
+    hash = file.arrayBuffer().then(async (bytes) => {
+      const digest = await crypto.subtle.digest("SHA-256", bytes);
+      return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+    });
+    // Picked and never split: nobody else will look at a failure.
+    hash.catch(() => {});
+    hashes.set(file, hash);
+  }
+  return hash;
 }
 
 /** Either a fresh task to upload into, or the finished task for the same song. */

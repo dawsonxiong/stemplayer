@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { warmGpu } from "~/lib/api";
+import { hashFile, warmGpu } from "~/lib/api";
 import { usePlayerStore } from "~/lib/store";
 import { MAX_FILE_SIZE_MB, MAX_DURATION_MINUTES, ACCEPTED_FORMATS } from "~/lib/constants";
 import { COLLECTION_LINK, parseLink, UNSUPPORTED_LINK } from "~/lib/links";
@@ -79,6 +79,7 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     setFile(picked);
     setLink("");
     warmGpu();
+    void hashFile(picked);
   }, []);
 
   const handleChange = useCallback(
