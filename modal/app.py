@@ -290,10 +290,10 @@ def _run_demucs(separator, input_path: str, uploaded: bool) -> dict:
 
 @app.cls(
     image=demucs_image,
-    # A 4-minute song takes ~5.8 s on an A10 from decoding to the last MP3,
-    # against ~8.9 s on an L4 and ~8.7 s on a T4: most of a job is now
+    # A 4-minute song takes ~5.7 s on an A10 from decoding to the last MP3,
+    # against ~8.1 s on an L4 and ~8.5 s on a T4: most of a job is now
     # decoding and encoding on the CPU, and A10 hosts have faster ones. At
-    # about 0.23¢ a song it costs the same as a T4 and less than an L4.
+    # about 0.21¢ a song it costs within 10% of a T4, and less than an L4.
     gpu="A10",
     # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
     cpu=4.0,
