@@ -17,15 +17,21 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
   // A song waits here until Split is pressed: one chosen file, or the link.
   const [file, setFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // The latest file picked, so one still being checked when another song is
+  // picked doesn't land over it.
+  const picked = useRef<File | null>(null);
   const errorId = useId();
 
   /** A link replaces a chosen file; there's only ever one song waiting. */
   const stageLink = useCallback((url: string) => {
+    picked.current = null;
     setError(null);
     setLink(url);
     if (url.trim()) setFile(null);
     // A GPU takes seconds to start: start one while Split is still to press.
-    if (parseLink(url.trim())) warmGpu();
+    // Not for an album or playlist, which Split turns away.
+    const parsed = parseLink(url.trim());
+    if (parsed && parsed.kind !== "collection") warmGpu();
   }, []);
 
   const split = useCallback(() => {
@@ -46,18 +52,19 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     onLinkSubmitted(url);
   }, [file, link, onFileSelected, onLinkSubmitted]);
 
-  const stageFile = useCallback(async (picked: File) => {
+  const stageFile = useCallback(async (chosen: File) => {
+    picked.current = chosen;
     setError(null);
 
     if (
-      !ACCEPTED_FORMATS.includes(picked.type) &&
-      !picked.name.match(/\.(mp3|wav|flac|ogg|aac|m4a)$/i)
+      !ACCEPTED_FORMATS.includes(chosen.type) &&
+      !chosen.name.match(/\.(mp3|wav|flac|ogg|aac|m4a)$/i)
     ) {
       setError("That file isn’t a supported format. Choose an MP3, WAV, FLAC, OGG, AAC or M4A.");
       return;
     }
 
-    if (picked.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+    if (chosen.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
       setError(
         `That file is over ${MAX_FILE_SIZE_MB}MB. Choose a smaller file or a compressed format like MP3.`,
       );
@@ -65,7 +72,8 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     }
 
     try {
-      const duration = await getAudioDuration(picked);
+      const duration = await getAudioDuration(chosen);
+      if (picked.current !== chosen) return;
       if (duration > MAX_DURATION_MINUTES * 60) {
         setError(
           `That song is over ${MAX_DURATION_MINUTES} minutes. Trim it or choose a shorter one.`,
@@ -76,10 +84,11 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
       // Let the server handle it
     }
 
-    setFile(picked);
+    if (picked.current !== chosen) return;
+    setFile(chosen);
     setLink("");
     warmGpu();
-    void hashFile(picked);
+    void hashFile(chosen);
   }, []);
 
   const handleChange = useCallback(

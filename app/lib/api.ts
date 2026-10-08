@@ -41,8 +41,9 @@ export function hashFile(file: File): Promise<string> {
       const digest = await crypto.subtle.digest("SHA-256", bytes);
       return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
     });
-    // Picked and never split: nobody else will look at a failure.
-    hash.catch(() => {});
+    // Picked and never split: nobody else will look at a failure. Forget it,
+    // so trying the same file again hashes it again.
+    hash.catch(() => hashes.delete(file));
     hashes.set(file, hash);
   }
   return hash;
