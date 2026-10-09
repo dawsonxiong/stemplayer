@@ -87,6 +87,7 @@ export async function uploadFileToR2(
   uploadUrl: string,
   file: File,
   onProgress?: (progress: number) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const xhr = new XMLHttpRequest();
 
@@ -101,10 +102,66 @@ export async function uploadFileToR2(
       else reject(new Error(`Upload failed: ${xhr.status}`));
     });
     xhr.addEventListener("error", () => reject(new Error("Upload failed")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.open("PUT", uploadUrl);
     xhr.setRequestHeader("Content-Type", file.type);
     xhr.send(file);
   });
+}
+
+/** A song uploading since it was picked, before Split was pressed. */
+export type PickedUpload = {
+  /** The task it went into, or the finished task for the same song. */
+  done: Promise<{ taskId: string; cached: boolean }>;
+  /** How far the upload has got, 0–100, and who to tell as it goes on. */
+  progress: number;
+  onProgress?: (progress: number) => void;
+  cancel: () => void;
+};
+
+const pickedUploads = new WeakMap<File, PickedUpload>();
+
+/** Uploads a picked song straight away, so that by the time Split is pressed
+ *  it's usually in R2 already. Once per file: Split picks up the upload the
+ *  pick started. A failed one is forgotten, so Split starts it again. */
+export function uploadPicked(file: File): PickedUpload {
+  const existing = pickedUploads.get(file);
+  if (existing) return existing;
+
+  const controller = new AbortController();
+  const upload: PickedUpload = {
+    progress: 0,
+    cancel: () => {
+      controller.abort();
+      forgetPicked(file);
+    },
+    done: (async () => {
+      // A failed hash only costs the cache hit, never the upload.
+      const hash = await hashFile(file).catch(() => null);
+      const ticket = await requestUploadUrl(file, hash);
+      if (!("uploadUrl" in ticket)) return { taskId: ticket.taskId, cached: true };
+      await uploadFileToR2(
+        ticket.uploadUrl,
+        file,
+        (progress) => {
+          upload.progress = progress;
+          upload.onProgress?.(progress);
+        },
+        controller.signal,
+      );
+      return { taskId: ticket.taskId, cached: false };
+    })(),
+  };
+  upload.done.catch(() => forgetPicked(file));
+  pickedUploads.set(file, upload);
+  return upload;
+}
+
+/** Drops a file's upload, so the next uploadPicked starts a new one: after
+ *  Split has taken its task (a retry needs a task of its own) or a failure. */
+export function forgetPicked(file: File): void {
+  pickedUploads.delete(file);
 }
 
 export async function triggerSeparation(taskId: string) {

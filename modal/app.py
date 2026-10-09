@@ -363,6 +363,11 @@ def _run_demucs(separator, wav=None, blocks=None, sink=None) -> dict:
     # decoding and encoding on the CPU, and A10 hosts have faster ones. At
     # about 0.21¢ a song it costs within 10% of a T4, and less than an L4.
     gpu="A10",
+    # Left to choose, Modal put A10s in Frankfurt, where the bucket (eastern
+    # North America) and the webhook were far enough away to make a split
+    # ~2 s slower: 10.4 s from Split to playable against 8.4 s pinned here.
+    # It costs 15% more per GPU-second, about 0.03¢ a song.
+    region="us",
     # Decoding, MP3 encoding and uploads run on the CPU, one core per stem.
     cpu=4.0,
     timeout=900,
@@ -410,9 +415,13 @@ class Separator:
             pass  # the song's own separation will meet any real problem
 
     @modal.method()
-    def warm(self) -> None:
+    def warm(self, hold: float = 0) -> None:
         """Nothing: getting a container started, and so loaded and warmed
-        up, before the song it's for has finished uploading is the point."""
+        up, before the song it's for has finished uploading is the point.
+
+        `hold` keeps it busy that long, so that calls made together each get
+        a container of their own (see .github/workflows/deploy-modal.yml)."""
+        time.sleep(min(hold, 30))
 
     @modal.method()
     def separate(self, task_id: str, webhook_url: str, **song):
