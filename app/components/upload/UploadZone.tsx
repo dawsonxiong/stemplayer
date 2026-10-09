@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { hashFile, warmGpu } from "~/lib/api";
+import { type PickedUpload, uploadPicked, warmGpu } from "~/lib/api";
 import { usePlayerStore } from "~/lib/store";
 import { MAX_FILE_SIZE_MB, MAX_DURATION_MINUTES, ACCEPTED_FORMATS } from "~/lib/constants";
 import { COLLECTION_LINK, parseLink, UNSUPPORTED_LINK } from "~/lib/links";
@@ -20,6 +20,9 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
   // The latest file picked, so one still being checked when another song is
   // picked doesn't land over it.
   const picked = useRef<File | null>(null);
+  // The file uploading since it was picked, until Split takes it. Replaced
+  // before then, its upload is stopped.
+  const uploading = useRef<{ file: File; upload: PickedUpload } | null>(null);
   const errorId = useId();
 
   /** A link replaces a chosen file; there's only ever one song waiting. */
@@ -27,7 +30,11 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     picked.current = null;
     setError(null);
     setLink(url);
-    if (url.trim()) setFile(null);
+    if (url.trim()) {
+      setFile(null);
+      uploading.current?.upload.cancel();
+      uploading.current = null;
+    }
     // A GPU takes seconds to start: start one while Split is still to press.
     // Not for an album or playlist, which Split turns away.
     const parsed = parseLink(url.trim());
@@ -36,6 +43,7 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
 
   const split = useCallback(() => {
     if (file) {
+      uploading.current = null;
       setFile(null);
       onFileSelected(file);
       return;
@@ -88,7 +96,9 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     setFile(chosen);
     setLink("");
     warmGpu();
-    void hashFile(chosen);
+    // Upload now rather than on Split, which then usually finds it done.
+    if (uploading.current?.file !== chosen) uploading.current?.upload.cancel();
+    uploading.current = { file: chosen, upload: uploadPicked(chosen) };
   }, []);
 
   const handleChange = useCallback(
@@ -213,7 +223,11 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
           </button>
           <button
             type="button"
-            onClick={() => setFile(null)}
+            onClick={() => {
+              setFile(null);
+              uploading.current?.upload.cancel();
+              uploading.current = null;
+            }}
             aria-label={`Remove ${file.name}`}
             className="mr-1.5 flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-raised hover:text-ink"
           >

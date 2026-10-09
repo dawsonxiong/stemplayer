@@ -25,10 +25,9 @@ import { titleFromFilename } from "~/lib/utils/title";
 import { findTrack, forgetTrack, rememberTrack } from "~/lib/history";
 import { parseLink } from "~/lib/links";
 import {
-  hashFile,
+  forgetPicked,
   requestLinkTask,
-  requestUploadUrl,
-  uploadFileToR2,
+  uploadPicked,
   triggerSeparation,
   pollStatus,
   fetchStemUrls,
@@ -149,17 +148,18 @@ export function Home() {
 
         if ("file" in input) {
           store.setStatus("uploading");
-          // A failed hash only costs the cache hit, never the upload.
-          const hash = await hashFile(input.file).catch(() => null);
-          const ticket = await requestUploadUrl(input.file, hash);
+          // Usually under way since the song was picked, and often finished.
+          const upload = uploadPicked(input.file);
+          store.setProcessingProgress(upload.progress);
+          upload.onProgress = (progress) => store.setProcessingProgress(progress);
+          const ticket = await upload.done;
+          // This task is used up now; trying again needs a fresh one.
+          forgetPicked(input.file);
           taskId = ticket.taskId;
           store.setTaskId(taskId);
 
           // Split before: its stems are already there, so skip straight to loading.
-          if ("uploadUrl" in ticket) {
-            await uploadFileToR2(ticket.uploadUrl, input.file, (progress) => {
-              store.setProcessingProgress(progress);
-            });
+          if (!ticket.cached) {
             finished = await separate(taskId);
           } else {
             store.setStatus("processing");

@@ -31,3 +31,29 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      # A deploy discards the GPU's memory snapshots, and Modal keeps one per
+      # kind of machine, so the first few songs after it each waited ~6–15 s
+      # longer while one was taken. Take them now: several containers at
+      # once, each held long enough that none is reused.
+      - name: Take the GPU's memory snapshots
+        run: |
+          python - <<'EOF'
+          from concurrent.futures import ThreadPoolExecutor
+          import modal
+
+          warm = modal.Cls.from_name("stem-demucs", "Separator")().warm
+
+          def take(_):
+              # A container of the version before can still answer once.
+              # Missing a snapshot here only costs a song a few seconds.
+              try:
+                  warm.remote(hold=20)
+              except Exception as e:
+                  print(f"warm-up failed: {e}")
+
+          with ThreadPoolExecutor(6) as pool:
+              list(pool.map(take, range(6)))
+          EOF
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
