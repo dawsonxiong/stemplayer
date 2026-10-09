@@ -660,8 +660,16 @@ def _separate(
                 with timed("separate"):
                     try:
                         stems = _run_demucs(separator, blocks=blocks, sink=encoder.feed)
-                    except NotStreamable:
+                    except NotStreamable as e:
                         stems = None
+                        # Why it's decoded whole after all, which costs ~0.6 s:
+                        # the decoder's reason and what kind of file it was.
+                        print(json.dumps({
+                            "task_id": task_id,
+                            "not_streamable": str(e)[-500:],
+                            "input": os.path.splitext(input_path)[1] or "upload",
+                            "bytes": os.path.getsize(input_path),
+                        }))  # fmt: skip
                 # Outside the except, so the aborted try's GPU buffers, which
                 # its traceback would keep alive, are freed first.
                 if stems is None:
