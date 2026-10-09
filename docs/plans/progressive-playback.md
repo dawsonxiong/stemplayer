@@ -1,6 +1,6 @@
 # Plan: progressive playback
 
-Status: proposed, not started. Written 2026-10-08.
+Status: phase 0 done (results at the end); phase 1 not started. Written 2026-10-08.
 
 ## Summary
 
@@ -12,7 +12,7 @@ The aim is for sound to start once the first stretch of all four stems exists, t
 
 **Recommendation:**
 - **Transport:** a Durable Object per task relays the stream (`LiveRelay`).
-  - Modal pushes the existing LAME bytes into it with one chunked `POST`, fed by `StreamingMP3(on_data=…)`.
+  - Modal pushes the existing LAME bytes into it over a WebSocket, fed by `StreamingMP3(on_data=…)`. (A chunked `POST` was the first idea; phase 0 found Cloudflare buffers those whole.)
   - The browser reads a streaming `fetch` response from it.
 - **Format:** raw MP3 frames, byte-identical to the R2 files.
 - **Playback while streaming:** don't use MSE. Instead:
@@ -58,10 +58,10 @@ The aim is for sound to start once the first stretch of all four stems exists, t
 
 **Pick A.**
 
-- **Modal → DO: a chunked HTTP POST** (a `requests` generator body) to `{webhook origin}/api/live/<taskId>/ingest`.
+- **Modal → DO: a WebSocket** to `{webhook origin}/api/live/<taskId>/ingest`, one frame per message, from a sync client on `_Live`'s thread. The DO sets `binaryType = "arraybuffer"`; at this compatibility date binary messages otherwise arrive as `Blob`s.
   - The URL is derived from the `webhook_url` Modal already receives, and it's authed with `x-webhook-secret`.
   - The connection opens at the top of `_separate`, so TLS is done before the first bytes.
-  - If Cloudflare turns out to buffer chunked request bodies, use a WebSocket ingest instead.
+  - Not a chunked POST: phase 0 found Cloudflare's edge buffers the whole request body before the Worker runs.
 - **DO → browser: a streaming `fetch`** of `GET /api/live/<taskId>?from=<per-stem byte offsets>`.
   - Headers: `application/octet-stream`, `Cache-Control: no-store, no-transform`.
   - Resuming is just a new request with offsets.
@@ -220,3 +220,37 @@ The Playwright harness stops at the fourth `canplay`, but live playback creates 
 7. A new dependency.
 8. The WebKit bug status is unverified on a device.
 9. Playback can start on a job that later fails.
+
+## Phase 0 results (2026-10-09)
+
+Probes are in a throwaway Worker, `stemplayer-live-probe`, and a stopped Modal app of the same name. Not in this repo.
+
+**Relay: Modal (`region="us"`, IAD) → DO (ORD/EWR) → reader in Toronto.**
+- **Chunked POST ingest is buffered whole at Cloudflare's edge.** All 68 chunks reached the DO together, after the last byte (median 11.2 s late). The same happened with curl over HTTP/1.1 and HTTP/2, at 0.7–37 MB. Not tested on a custom domain.
+- **WebSocket ingest streams.** Over 204 chunks, arrival spread matched send spread exactly.
+
+  | Hop | Median | p90 |
+  |---|---|---|
+  | Modal → DO | 29 ms | 32 ms |
+  | Modal → browser | 49 ms | 51 ms |
+  | DO → browser | 20 ms | 22 ms |
+
+- **The GET to the browser never buffered:** Chromium, WebKit, Node and curl, any `Accept-Encoding`.
+
+**Player: `mpg123-decoder` (81 KB) in a module Worker, one AudioWorklet, four stems at 192k CBR.**
+
+| | Chromium 153 | WebKit 26.4 (macOS) |
+|---|---|---|
+| Start → first audible | 244–479 ms | 198 ms |
+| Sample-aligned (sum vs mixture, best at lag 0) | yes | yes |
+| Underruns | 0 | 0 |
+| Decoder worker CPU while playing | 0.6–2.1% of a core | 0.5% |
+| MSE `audio/mpeg` → `createMediaElementSource` | works | **plays, but Web Audio gets silence** |
+
+- **The WebKit MSE bug reproduces,** so MSE stays out.
+- **The 1.5 s pre-buffer** is the whole start-up cost when bytes trickle in at real time. Live's first ~8 s burst would hide it, so a lower threshold is worth trying.
+- **Chrome:** a `fetch` of a URL an `<audio>` element is already loading waits for that load. The phase-4 Range GETs should use `cache: "no-store"` or a distinct URL.
+
+**Still open:**
+- **A real iPhone** (silent switch, locked screen, iOS versions): open https://stemplayer-live-probe.dawsonxiong.workers.dev/ on the phone.
+- **Firefox:** Playwright's build wouldn't launch in the sandbox.
