@@ -8,11 +8,11 @@ Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demu
 
 Loading the page wakes the Modal API (`/api/wake` → its `/health`), a small container that sleeps after 20 idle minutes and takes 3–6 s to start. Picking a song (choosing, dropping or pasting it, before Split) also asks Modal to start a GPU container (`/api/warm` → `app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the person presses Split and the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
 
-A song link skips the upload: `/api/link` parses it (`app/lib/links.ts`) and looks it up (`app/lib/links.server.ts`) → `/api/separate` → the Modal job fetches the audio with yt-dlp, then carries on as above.
+A song link skips the upload: `/api/link` parses it (`app/lib/links.ts`) and looks it up (`app/lib/links.server.ts`) → `/api/separate` → the Modal job has `fetch_link`, a small CPU function on Google Cloud, download the audio with yt-dlp, then carries on as above. Link audio that libsndfile can't read (YouTube's Opus and AAC) streams into separation through ffmpeg.
 
 - YouTube and SoundCloud are downloaded directly; oEmbed gives the title, and for SoundCloud the numeric track ID.
 - Spotify and Apple Music are DRM-protected, so the job searches YouTube for the artist and title and keeps a result within a few seconds of the song's length. Apple's metadata comes from the iTunes Lookup API. Spotify's comes from the `__NEXT_DATA__` on its embed page, which is not a published API and can break without warning.
-- YouTube refuses most of Modal's shared cloud IPs ("Sign in to confirm you're not a bot"), whatever the yt-dlp client or PO token. When it does, the job falls back to the Apify actor `lurkapi~youtube-to-mp3-audio-downloader` with residential proxies, which returns a link to the audio file. It needs the Modal secret `stemplayer-apify` (`APIFY_TOKEN`) and costs about a cent per song.
+- YouTube asks containers on AWS, Azure and Oracle (where Modal's A10s run) to sign in for many videos ("Sign in to confirm you're not a bot"), whatever the yt-dlp client or PO token, but lets Google Cloud through outside its Ashburn region. So `fetch_link` runs on `cloud="gcp"`, `region="us-central"`. When YouTube still refuses, it falls back to the Apify actor `lurkapi~youtube-to-mp3-audio-downloader` with residential proxies, which returns a link to the audio file. That takes 44–168 s and 5–8.5¢ a song, and the Apify account is capped at $5 a month. It needs the Modal secret `stemplayer-apify` (`APIFY_TOKEN`).
 - Modal only ever gets IDs or search terms, never a URL to fetch.
 - Repeat songs reuse their stems via a `link:<version>:<provider>:<id>` index in KV.
 

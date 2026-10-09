@@ -37,6 +37,14 @@ demucs_image = (
     .add_local_python_source("stemsep")
 )
 
+# For fetch_link: just what downloading needs, so it starts quickly.
+fetch_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    # yt-dlp fixes up HLS AAC downloads with it.
+    .apt_install("ffmpeg")
+    .pip_install("requests==2.34.2", "yt-dlp[default]==2026.8.19", "deno==2.9.7")
+)
+
 api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
     "fastapi[standard]"
 )
@@ -125,7 +133,13 @@ def _download(url: str, tmpdir: str) -> dict:
     import yt_dlp
 
     opts = {
-        "format": "bestaudio/best",
+        # A single file over HLS. SoundCloud offers both for most tracks, and
+        # bestaudio picks its 160k AAC in ~50 HLS fragments: 0.9–8.4 s to
+        # download, against 0.07–1.1 s for the one 128k MP3 file, which also
+        # decodes while it separates. YouTube's audio is a single file anyway.
+        "format": "bestaudio[protocol^=http]/bestaudio/best",
+        # For a track that's only on HLS, fetch its fragments 8 at a time.
+        "concurrent_fragment_downloads": 8,
         "outtmpl": os.path.join(tmpdir, "input_audio.%(ext)s"),
         "noplaylist": True,
         "quiet": True,
@@ -218,6 +232,48 @@ def _download_via_apify(video_id: str, tmpdir: str) -> dict:
     return {"title": item.get("title"), "requested_downloads": [{"filepath": path}]}
 
 
+@app.function(
+    image=fetch_image,
+    # For a video YouTube gates, it asked every container on AWS, Azure and
+    # Oracle (where the A10s are) to sign in, 21 of 21. On Google
+    # Cloud it let 30 of 30 through outside Ashburn, and 0 of 4 in it. So
+    # links download here, and Apify, which took 44–168 s and ~5–8¢ a song,
+    # is only for the rare refusal here too. Pinning a narrow region costs
+    # 1.75x, on a second or two of one CPU.
+    cloud="gcp",
+    region="us-central",
+    cpu=1.0,
+    memory=1024,
+    timeout=300,
+    scaledown_window=60,
+    secrets=[apify_secret],
+)
+def fetch_link(url: str | None, youtube_id: str | None = None) -> dict:
+    """A song link's audio as {"data", "ext", "title"}, or the UserError it
+    met as {"error", "blocked", "cause"}, for _separate to raise again. No
+    url: nothing, to start a container ahead of a song."""
+    if not url:
+        return {}
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            try:
+                info = _download(url, tmpdir)
+            except YouTubeBlocked:
+                if not youtube_id:
+                    raise
+                info = _download_via_apify(youtube_id, tmpdir)
+        except UserError as e:
+            return {
+                "error": str(e),
+                "blocked": isinstance(e, YouTubeBlocked),
+                "cause": repr(e.__cause__),
+            }
+        path = info["requested_downloads"][0]["filepath"]
+        with open(path, "rb") as f:
+            data = f.read()
+    return {"data": data, "ext": os.path.splitext(path)[1], "title": info.get("title")}
+
+
 # Words that mark a different recording of a song: only a problem when the
 # song's own title doesn't have them.
 OTHER_VERSIONS = (
@@ -305,6 +361,69 @@ def _decode(separator, input_path: str, uploaded: bool):
         if uploaded:
             raise UserError(UNREADABLE) from e
         raise
+
+
+def _ffmpeg_blocks(path: str, samplerate: int, channels: int, seconds: float = 2.0):
+    """decode_blocks for what libsndfile can't read, as YouTube's Opus and
+    AAC: ffmpeg decodes on a pipe, so separating starts at its first block
+    (0.4–0.7 s) rather than after the whole song (0.5–1.2 s). The same
+    samples as decode, to the bit, remixed as it does."""
+    import subprocess
+
+    import numpy as np
+    import torch
+    from stemsep.audio import NotStreamable
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=channels", "-of", "csv=p=0", path],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    try:
+        src = int(probe.stdout.split()[0])
+    except (IndexError, ValueError):
+        raise NotStreamable("ffprobe found no audio")
+    if channels != 2:
+        raise NotStreamable(f"{channels} channels")
+    # Mono to both sides, and only the first two of more, as decode does.
+    pan = f"pan=stereo|c0=c0|c1={'c0' if src == 1 else 'c1'}"
+    proc = subprocess.Popen(
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-i", path,
+         "-map", "0:a:0", "-af", pan, "-ar", str(samplerate),
+         "-c:a", "pcm_f32le", "-f", "f32le", "pipe:1"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )  # fmt: skip
+    frame = 4 * channels
+    size = int(seconds * samplerate) * frame
+    got = 0
+    with proc:
+        while buf := proc.stdout.read(size):
+            buf = buf[: len(buf) // frame * frame]
+            got += len(buf)
+            block = np.frombuffer(buf, "<f4").reshape(-1, channels)
+            yield torch.from_numpy(block.T.copy())
+        err = proc.stderr.read()
+    # Either way the song is decoded again whole, which reports the error.
+    if proc.returncode:
+        raise NotStreamable(err.decode(errors="replace")[-500:])
+    if not got:
+        raise NotStreamable("no audio")
+
+
+def _blocks(path: str, samplerate: int, channels: int):
+    """decode_blocks, or ffmpeg's if libsndfile can't open the file."""
+    from stemsep.audio import NotStreamable, decode_blocks
+
+    blocks = decode_blocks(path, samplerate, channels)
+    try:
+        first = next(blocks)
+    except NotStreamable:
+        yield from _ffmpeg_blocks(path, samplerate, channels)
+        return
+    except StopIteration:
+        return
+    yield first
+    yield from blocks
 
 
 def _prefetch(blocks):
@@ -449,7 +568,7 @@ def _separate(
     match: dict | None = None,
 ):
     import boto3
-    from stemsep.audio import NotStreamable, StreamingMP3, decode_blocks
+    from stemsep.audio import NotStreamable, StreamingMP3
 
     # Seconds per stage, logged with each job and returned to the caller.
     timings: dict[str, float] = {}
@@ -505,14 +624,14 @@ def _separate(
 
             with timed("fetch"):
                 if url:
-                    try:
-                        info = _download(url, tmpdir)
-                    except YouTubeBlocked:
-                        if not youtube_id:
-                            raise
-                        info = _download_via_apify(youtube_id, tmpdir)
-                    input_path = info["requested_downloads"][0]["filepath"]
-                    title = info.get("title")
+                    got = fetch_link.remote(url, youtube_id)
+                    if "error" in got:
+                        error = YouTubeBlocked if got["blocked"] else UserError
+                        raise error(got["error"]) from RuntimeError(got["cause"])
+                    input_path = os.path.join(tmpdir, "input_audio" + got["ext"])
+                    with open(input_path, "wb") as f:
+                        f.write(got["data"])
+                    title = got["title"]
                 else:
                     input_path = os.path.join(tmpdir, "input_audio")
                     s3.download_file(bucket, input_r2_key, input_path)
@@ -526,12 +645,12 @@ def _separate(
                     STEMS, separator.samplerate, separator.audio_channels, gain=STEM_GAIN
                 )
 
-            # Most songs (MP3, WAV, FLAC, Ogg) decode while they separate,
-            # on a thread from now, so a new container's warm-up overlaps it
-            # too. Anything else, or anything libsndfile would read short,
-            # is decoded whole first.
+            # Songs decode while they separate, on a thread from now, so a
+            # new container's warm-up overlaps it too: MP3, WAV, FLAC and Ogg
+            # in process, anything else through ffmpeg. One libsndfile would
+            # read short, or ffmpeg fails on, is decoded whole first.
             blocks = _prefetch(
-                decode_blocks(input_path, separator.samplerate, separator.audio_channels)
+                _blocks(input_path, separator.samplerate, separator.audio_channels)
             )
             encoder = new_encoder()
             try:
@@ -699,6 +818,8 @@ def separate_api():
                 return {"status": "warming"}
             last_warm = now
         Separator().warm.spawn()
+        # A cold fetch_link adds ~5 s to a link's download; warm, ~0.5 s.
+        fetch_link.spawn(None)
         return {"status": "warming"}
 
     @web.post("/")
