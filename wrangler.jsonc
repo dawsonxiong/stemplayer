@@ -4,8 +4,8 @@
   "account_id": "28cf8412596e686a740a117e47df06c4",
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
-  // vinext's built-in Worker entry serves the App Router.
-  "main": "vinext/server/fetch-handler",
+  // The live relay's routes, then vinext's App Router (worker/index.ts).
+  "main": "./worker/index.ts",
   "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" },
 
   // R2 bucket for uploads, stems and job records. Its lifecycle rules (set on
@@ -25,6 +25,13 @@
     },
   ],
 
+  // One LiveRelay per task relays the stems from the Modal job to the
+  // browser while they're being encoded. In memory only; nothing is stored.
+  "durable_objects": {
+    "bindings": [{ "name": "LIVE", "class_name": "LiveRelay" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["LiveRelay"] }],
+
   // Declaring the secrets makes local dev read them from process.env, which
   // `pnpm dev` fills from 1Password via `op run`, and warns if one is missing.
   "secrets": {
@@ -34,6 +41,8 @@
   "vars": {
     "MODAL_ENDPOINT": "https://dawsonxiong--stem-demucs-separate-api.modal.run",
     "R2_PUBLIC_ENDPOINT": "https://28cf8412596e686a740a117e47df06c4.r2.cloudflarestorage.com",
+    // "on" lets /api/separate ask Modal to stream and opens /api/live/*.
+    "LIVE_PLAYBACK": "off",
   },
 
   // Secrets (set via: npx wrangler secret put <NAME>):

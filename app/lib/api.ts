@@ -164,14 +164,16 @@ export function forgetPicked(file: File): void {
   pickedUploads.delete(file);
 }
 
-export async function triggerSeparation(taskId: string) {
+/** Starts the GPU job. With `live`, asks for the stems to stream as they
+ *  encode; the answer says whether they will. */
+export async function triggerSeparation(taskId: string, { live = false } = {}) {
   const res = await fetch("/api/separate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ taskId }),
+    body: JSON.stringify(live ? { taskId, live } : { taskId }),
   });
   if (!res.ok) throw await failure(res, "Failed to start separation");
-  return res.json();
+  return res.json() as Promise<{ status: string; live?: boolean }>;
 }
 
 /** What loading a finished job's stems takes, from /api/stems or from the

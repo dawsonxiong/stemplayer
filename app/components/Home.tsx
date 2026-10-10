@@ -24,6 +24,8 @@ import { trackDetails } from "~/lib/utils/format";
 import { titleFromFilename } from "~/lib/utils/title";
 import { findTrack, forgetTrack, rememberTrack } from "~/lib/history";
 import { parseLink } from "~/lib/links";
+import { LiveSession } from "~/lib/audio/live";
+import { liveEnabled } from "~/lib/audio/live-support";
 import {
   forgetPicked,
   requestLinkTask,
@@ -92,6 +94,9 @@ export function Home() {
   const canRetry = usePlayerStore((s) => s.canRetry);
   /** Runs the last split or load again, for the "Try again" button. */
   const retry = useRef<(() => void) | null>(null);
+  /** Bumped by every split, load and "Load another song", so a split that's
+   *  been left behind, still finishing in the background, keeps quiet. */
+  const run = useRef(0);
 
   useKeyboardShortcuts(audioEngine);
 
@@ -99,6 +104,14 @@ export function Home() {
   const split = useCallback(
     async (input: { file: File } | { url: string }) => {
       retry.current = () => void split(input);
+      const thisRun = ++run.current;
+      const current = () => run.current === thisRun;
+      // Play the song while it's still being separated, where it can. Primed
+      // in this click: iOS only starts audio in a gesture.
+      const live = audioEngine !== null && liveEnabled();
+      if (live) audioEngine.prime();
+      /** Set once the live stream has started playing, before "ready". */
+      let livePlaying = false;
       // The link field only submits links it could read, so there's a provider.
       const source: Source =
         "file" in input ? "file" : (parseLink(input.url)?.provider ?? "youtube");
@@ -115,15 +128,47 @@ export function Home() {
         store.setProcessingProgress(0);
       };
 
+      /** Plays the song from its live stream once enough of it has arrived,
+       *  while `separate` waits for the finished files: whichever comes
+       *  first. The files still finish the job either way. */
+      let liveOpened = false;
+      const startLive = (taskId: string, started: ReturnType<typeof triggerSeparation>) => {
+        if (!live || !audioEngine || liveOpened) return;
+        liveOpened = true;
+        const session = new LiveSession(taskId);
+        // A server with live playback off says so: stop asking.
+        started.then(
+          (res) => !res.live && session.close(),
+          () => session.close(),
+        );
+        audioEngine.loadLive(session, { autoplay: usePlayerStore.getState().isOn }).then(
+          () => {
+            if (!current() || usePlayerStore.getState().status !== "processing") return;
+            livePlaying = true;
+            const now = usePlayerStore.getState();
+            if (!now.trackTitle && session.header?.title) store.setTrackTitle(session.header.title);
+            store.setLive(true);
+            store.setDuration(audioEngine.duration);
+            store.setStatus("ready");
+            store.setStage(null);
+            store.setPlaying(audioEngine.isPlaying);
+          },
+          // The finished files load instead.
+          () => {},
+        );
+      };
+
       /** Starts the GPU job (unless `started` already has) and waits for it,
        *  lighting each step as it goes. */
-      const separate = async (taskId: string, started = triggerSeparation(taskId)) => {
+      const separate = async (taskId: string, started = triggerSeparation(taskId, { live })) => {
         enter("start");
         store.setStatus("processing");
+        startLive(taskId, started);
         await started;
 
         try {
           return await pollStatus(taskId, (progress) => {
+            if (livePlaying) return;
             // The job's first progress report means the GPU is up and working.
             // For a link it then fetches the song, done when it reports 15.
             const now = usePlayerStore.getState().stage;
@@ -175,14 +220,44 @@ export function Home() {
           store.setTaskId(taskId);
           if (!("cached" in ticket)) {
             if (ticket.title) store.setTrackTitle(ticket.title);
-            const started = triggerSeparation(taskId);
+            const started = triggerSeparation(taskId, { live });
             started.catch(() => {}); // reported by separate, after the hold
+            // Now rather than after the hold, so the relay starts out near the
+            // person, not near Modal.
+            startLive(taskId, started);
             await shown;
             finished = await separate(taskId, started);
           } else {
             await shown;
           }
         }
+
+        if (!current()) return;
+        // Already playing from the stream: carry on from the files, unheard.
+        if (livePlaying && finished?.load && audioEngine) {
+          stage = "load";
+          setTrackParam(taskId);
+          const load = finished.load;
+          if (source !== "file") store.setTrackTitle(load.title);
+          store.setMatchedVideo(load.matchedVideo);
+          try {
+            await audioEngine.completeLive(load);
+          } catch (err) {
+            console.warn(
+              "Couldn't finish the live stream from the files; playing them instead",
+              err,
+            );
+            await audioEngine.handOver(load);
+          }
+          if (!current()) return;
+          store.setLive(false);
+          store.setDuration(audioEngine.duration);
+          if (load.createdAt) store.setTrackDate(load.createdAt);
+          remember(taskId);
+          return;
+        }
+        // The stream lost the race, or never came: the files play instead.
+        if (live) audioEngine?.dispose();
 
         // Set before loading, so a reload retries the load and not the GPU run.
         enter("load");
@@ -213,8 +288,17 @@ export function Home() {
           store.setPlaying(true);
         }
       } catch (err) {
+        if (!current()) return;
         // The message on screen is per stage; this says what actually broke.
         console.error(`Failed at the ${stage} step`, err);
+        // A job can fail after its stream started playing: stop it.
+        if (live) {
+          audioEngine?.dispose();
+          store.setLive(false);
+          store.setPlaying(false);
+          // Its steps were put away when it started; show which one broke.
+          if (livePlaying) enter(stage === "load" ? "load" : "separate");
+        }
         store.setStatus("error");
         store.setErrorMessage(err instanceof UserFacingError ? err.message : stageError(stage));
         // A song that's too long or private would only fail the same way.
@@ -232,6 +316,7 @@ export function Home() {
     async (taskId: string, knownTitle?: string) => {
       if (!audioEngine) return;
       retry.current = () => void openTrack(taskId, knownTitle);
+      run.current++;
       const store = usePlayerStore.getState();
       store.reset();
       store.setTaskId(taskId);
@@ -286,6 +371,7 @@ export function Home() {
   }, [trackTitle, status]);
 
   const handleNewTrack = useCallback(() => {
+    run.current++;
     audioEngine?.dispose();
     usePlayerStore.getState().reset();
     setTrackParam(null);

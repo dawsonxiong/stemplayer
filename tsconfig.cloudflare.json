@@ -1,6 +1,12 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["next-env.d.ts", ".next/types/**/*", "app/**/*", "worker-configuration.d.ts"],
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*",
+    "app/**/*",
+    "worker/**/*",
+    "worker-configuration.d.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "strict": true,

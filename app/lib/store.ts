@@ -29,6 +29,12 @@ interface PlayerState {
 
   // Playback
   isPlaying: boolean;
+  /** Playing while it's still being separated, from the live stream. */
+  live: boolean;
+  /** Live playback ran out of audio and is waiting for more. */
+  buffering: boolean;
+  /** Seconds of the song that have arrived, while playing live. */
+  liveLoaded: number;
   currentTime: number;
   duration: number;
 
@@ -71,6 +77,9 @@ interface PlayerState {
   setFilter: (params: Partial<PlayerState["filter"]>) => void;
   setStatus: (status: PlayerState["status"]) => void;
   setPlaying: (playing: boolean) => void;
+  setLive: (live: boolean) => void;
+  setBuffering: (buffering: boolean) => void;
+  setLiveLoaded: (seconds: number) => void;
   setCurrentTime: (time: number) => void;
   setDuration: (duration: number) => void;
   setTaskId: (taskId: string) => void;
@@ -104,6 +113,9 @@ const initialState = {
   errorMessage: null,
   canRetry: false,
   isPlaying: false,
+  live: false,
+  buffering: false,
+  liveLoaded: 0,
   currentTime: 0,
   duration: 0,
   volumes: { vocals: 1, drums: 1, bass: 1, other: 1 },
@@ -132,6 +144,9 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   setFilter: (params) => set((s) => ({ filter: { ...s.filter, ...params } })),
   setStatus: (status) => set({ status }),
   setPlaying: (isPlaying) => set({ isPlaying }),
+  setLive: (live) => set({ live }),
+  setBuffering: (buffering) => set({ buffering }),
+  setLiveLoaded: (liveLoaded) => set({ liveLoaded }),
   setCurrentTime: (currentTime) => set({ currentTime }),
   setDuration: (duration) => set({ duration }),
   setTaskId: (taskId) => set({ taskId }),

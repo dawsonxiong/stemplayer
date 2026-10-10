@@ -24,6 +24,8 @@ demucs_image = (
         "soundfile==0.14.0",
         "boto3==1.34.0",
         "requests==2.34.2",
+        # Streams the stems to the Worker's live relay as they encode.
+        "websocket-client==1.9.2",
         # yt-dlp needs a JavaScript runtime to solve YouTube's challenges. The
         # [default] extra brings the solver scripts, and deno, its default
         # runtime, comes as a wheel with the binary on PATH.
@@ -98,6 +100,134 @@ def _report(webhook_url: str, payload: dict) -> None:
             continue
         except Exception:
             return
+
+
+# The live stream's frame types (app/lib/live-protocol.ts). Each frame is
+# `u8 type | u8 stem | u32 value | u32 length | payload`, little-endian.
+LIVE_HEADER, LIVE_DATA, LIVE_STEM_END, LIVE_END, LIVE_RESET, LIVE_ABORT, LIVE_KEEPALIVE = range(1, 8)
+# The most one DATA frame carries. LAME hands over a whole stretch at a time,
+# up to ~1.3 MB for a stem's 56 s, more than a WebSocket message should be.
+LIVE_PIECE = 64 * 1024
+
+
+class _Live:
+    """Streams each stem's MP3 to the Worker's LiveRelay as it's encoded, so
+    the browser can start playing long before the files are uploaded.
+
+    Over a WebSocket to `{webhook origin}/api/live/<task_id>/ingest`, from a
+    thread of its own, opened when the job starts so the handshake is done by
+    the time there's audio. Never blocks the encoders: frames queue, and if
+    the relay can't be reached they're dropped and the job carries on. The
+    browser then waits for the finished files as it did before."""
+
+    def __init__(self, webhook_url: str, task_id: str):
+        import queue
+        import threading
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(webhook_url)
+        scheme = "wss" if parts.scheme == "https" else "ws"
+        self.url = f"{scheme}://{parts.netloc}/api/live/{task_id}/ingest"
+        self.started = time.perf_counter()
+        self.first_data: float | None = None
+        self.error: str | None = None
+        # Each stem's bytes sent in this epoch. Each is only touched by its
+        # own encoder thread, and by reset once they've all stopped.
+        self.offsets = {name: 0 for name in STEMS}
+        self.epoch = 0
+        self._queue = queue.Queue()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _put(self, kind: int, stem: int = 0, value: int = 0, payload: bytes = b"") -> None:
+        import struct
+
+        if self.error is None:
+            self._queue.put(struct.pack("<BBII", kind, stem, value, len(payload)) + payload)
+
+    def header(self, **info) -> None:
+        self._put(LIVE_HEADER, payload=json.dumps(info).encode())
+
+    def data(self, name: str, chunk: bytes) -> None:
+        """StreamingMP3's on_data, called on that stem's encoder thread."""
+        if self.error is not None:
+            return
+        if self.first_data is None:
+            self.first_data = time.perf_counter()
+        stem = STEMS.index(name)
+        for start in range(0, len(chunk), LIVE_PIECE):
+            piece = chunk[start : start + LIVE_PIECE]
+            self._put(LIVE_DATA, stem, self.offsets[name], piece)
+            self.offsets[name] += len(piece)
+
+    def reset(self) -> None:
+        """The song is being separated again from the start: what was sent
+        is void. Only once the encoders have stopped."""
+        self.epoch += 1
+        self.offsets = {name: 0 for name in STEMS}
+        self._put(LIVE_RESET, value=self.epoch)
+
+    def finish(self, gains: dict, rescaled) -> None:
+        """Everything's encoded. A rescaled stem's stream stopped short, and
+        its file is a fresh encoding at the gain it reports."""
+        for i, name in enumerate(STEMS):
+            if name not in rescaled:
+                self._put(LIVE_STEM_END, i, self.offsets[name])
+        self._put(
+            LIVE_END,
+            payload=json.dumps(
+                {"gains": gains, "rescaled": sorted(rescaled), "bytes": self.offsets}
+            ).encode(),
+        )
+
+    def abort(self, reason: str) -> None:
+        self._put(LIVE_ABORT, payload=reason[:300].encode())
+
+    def close(self, wait: float = 5.0) -> None:
+        """Sends what's queued and closes, waiting at most `wait` seconds."""
+        self._queue.put(None)
+        self._thread.join(wait)
+
+    def timings(self) -> dict:
+        out = {"live_bytes": sum(self.offsets.values())}
+        if self.first_data is not None:
+            out["live_first_data"] = round(self.first_data - self.started, 3)
+        if self.error is not None:
+            out["live_error"] = self.error
+        return out
+
+    def _run(self) -> None:
+        import queue
+
+        import websocket
+
+        ws = None
+        try:
+            ws = websocket.create_connection(
+                self.url,
+                header={"x-webhook-secret": os.environ["WEBHOOK_SECRET"]},
+                timeout=10,
+            )
+            while True:
+                try:
+                    frame = self._queue.get(timeout=15)
+                except queue.Empty:
+                    # A link can take a minute to download before any audio.
+                    frame = bytes([LIVE_KEEPALIVE]) + bytes(9)
+                if frame is None:
+                    break
+                ws.send_binary(frame)
+        except Exception as e:
+            self.error = repr(e)[:300]
+            # Drain, so what's queued is freed and close() returns.
+            while self._queue.get() is not None:
+                pass
+        finally:
+            if ws is not None:
+                try:
+                    ws.close(timeout=2)
+                except Exception:
+                    pass
 
 
 def _sha256(path: str) -> str:
@@ -268,7 +398,13 @@ def _fetch_link(url: str | None) -> dict:
         path = info["requested_downloads"][0]["filepath"]
         with open(path, "rb") as f:
             data = f.read()
-    return {"data": data, "ext": os.path.splitext(path)[1], "title": info.get("title")}
+    return {
+        "data": data,
+        "ext": os.path.splitext(path)[1],
+        "title": info.get("title"),
+        # For the live stream's scrubber, until the stems are done.
+        "duration": info.get("duration"),
+    }
 
 
 # Pinning a narrow region costs 1.75x, on a second or two of one CPU.
@@ -301,9 +437,12 @@ def fetch_link_eu(url: str) -> dict:
 FETCH_STAND_INS = (fetch_link_east, fetch_link_west, fetch_link_eu)
 
 
-def _fetch(url: str, youtube_id: str | None, tmpdir: str) -> tuple[str, str | None]:
+def _fetch(
+    url: str, youtube_id: str | None, tmpdir: str
+) -> tuple[str, str | None, float | None]:
     """Download a link's audio through fetch_link, retrying a YouTube refusal
-    in other regions and then through Apify. Returns its path and title."""
+    in other regions and then through Apify. Returns its path, title and
+    length in seconds, when the site says."""
     from concurrent.futures import as_completed
 
     got = fetch_link.remote(url)
@@ -325,14 +464,14 @@ def _fetch(url: str, youtube_id: str | None, tmpdir: str) -> tuple[str, str | No
         pool.shutdown(wait=False, cancel_futures=True)
     if got.get("blocked") and youtube_id:
         info = _download_via_apify(youtube_id, tmpdir)
-        return info["requested_downloads"][0]["filepath"], info.get("title")
+        return info["requested_downloads"][0]["filepath"], info.get("title"), None
     if "error" in got:
         error = YouTubeBlocked if got["blocked"] else UserError
         raise error(got["error"]) from RuntimeError(got["cause"])
     path = os.path.join(tmpdir, "input_audio" + got["ext"])
     with open(path, "wb") as f:
         f.write(got["data"])
-    return path, got["title"]
+    return path, got["title"], got.get("duration")
 
 
 # Words that mark a different recording of a song: only a problem when the
@@ -604,7 +743,7 @@ class Separator:
         time.sleep(min(hold, 30))
 
     @modal.method()
-    def separate(self, task_id: str, webhook_url: str, **song):
+    def separate(self, task_id: str, webhook_url: str, live: bool = False, **song):
         """Fetch the song, run Demucs, upload stems, report back via webhook.
 
         The song (`song`, one of `input_r2_key`, `youtube_id`, `soundcloud_id`
@@ -613,9 +752,12 @@ class Separator:
         length.
 
         R2 credentials and the webhook secret come from Modal secrets, not the
-        request body.
+        request body. With `live`, the stems also stream to the browser as
+        they encode (see _Live).
         """
-        return _separate(self.separator, task_id, webhook_url, warmup=self.warmup, **song)
+        return _separate(
+            self.separator, task_id, webhook_url, warmup=self.warmup, live=live, **song
+        )
 
 
 def _separate(
@@ -627,12 +769,16 @@ def _separate(
     youtube_id: str | None = None,
     soundcloud_id: str | None = None,
     match: dict | None = None,
+    live: bool = False,
 ):
     import boto3
     from stemsep.audio import NotStreamable, StreamingMP3
 
     # Seconds per stage, logged with each job and returned to the caller.
-    timings: dict[str, float] = {}
+    timings: dict[str, float | int | str] = {}
+
+    # Opened first, so the relay's connection is up before there's audio.
+    streamer = _Live(webhook_url, task_id) if live else None
 
     @contextmanager
     def timed(stage: str):
@@ -685,18 +831,42 @@ def _separate(
 
             with timed("fetch"):
                 if url:
-                    input_path, title = _fetch(url, youtube_id, tmpdir)
+                    input_path, title, duration = _fetch(url, youtube_id, tmpdir)
                 else:
                     input_path = os.path.join(tmpdir, "input_audio")
                     s3.download_file(bucket, input_r2_key, input_path)
+                    duration = None
                 input_sha256 = _sha256(input_path)
             progress(15)
 
+            if streamer:
+                if not duration:
+                    try:
+                        import soundfile
+
+                        duration = soundfile.info(input_path).duration
+                    except Exception:
+                        duration = None  # m4a and webm; the scrubber grows instead
+                streamer.header(
+                    stems=list(STEMS),
+                    samplerate=separator.samplerate,
+                    channels=separator.audio_channels,
+                    bitrate=192,
+                    gain=STEM_GAIN,
+                    durationHint=duration,
+                    title=title,
+                )
+
             # The stems encode to MP3 as they come off the GPU, one LAME per
-            # stem on its own core, rather than all after it.
+            # stem on its own core, rather than all after it, and with
+            # `streamer` go to the browser as they do.
             def new_encoder():
                 return StreamingMP3(
-                    STEMS, separator.samplerate, separator.audio_channels, gain=STEM_GAIN
+                    STEMS,
+                    separator.samplerate,
+                    separator.audio_channels,
+                    gain=STEM_GAIN,
+                    on_data=streamer.data if streamer else None,
                 )
 
             # Songs decode while they separate, on a thread from now, so a
@@ -728,6 +898,10 @@ def _separate(
                 # its traceback would keep alive, are freed first.
                 if stems is None:
                     encoder.close()
+                    # Whatever streamed came from the aborted pass; the browser
+                    # keeps what it's played and takes the rest from this one.
+                    if streamer:
+                        streamer.reset()
                     encoder = new_encoder()
                     with timed("decode"):
                         wav = _decode(separator, input_path, uploaded=not url)
@@ -736,6 +910,9 @@ def _separate(
                 progress(80)
                 with timed("encode"):
                     mp3s = encoder.finish(stems)
+                # Before the upload, so the browser learns the gains early.
+                if streamer:
+                    streamer.finish(encoder.gains, encoder.rescaled)
             finally:
                 encoder.close()
 
@@ -778,10 +955,18 @@ def _separate(
                     },
                 )
 
+        if streamer:
+            # Long since sent, as a rule: END went before the upload. Not
+            # waited on for long, so a slow relay can't hold the GPU.
+            streamer.close(wait=0.5)
+            timings.update(streamer.timings())
         print(json.dumps({"task_id": task_id, "timings": timings}))
         return {"task_id": task_id, "status": "complete", "timings": timings}
 
     except Exception as e:
+        if streamer:
+            # Playback may have started; the browser stops on the error.
+            streamer.abort(str(e))
         reporter.shutdown(wait=True, cancel_futures=True)
         _report(
             webhook_url,
@@ -801,6 +986,8 @@ def _separate(
         # Modal's cancellation of an input isn't an Exception, so it skips the
         # handler above; don't leave its reports to mix with the next song's.
         reporter.shutdown(wait=False, cancel_futures=True)
+        if streamer:
+            streamer.close(wait=0)
 
 
 def _valid_input(given: dict) -> bool:
@@ -841,7 +1028,8 @@ def separate_api():
         "soundcloud_id": "293",                     # a SoundCloud track, or
         "match": {"artist": "...", "title": "...",  # a song to find on YouTube
                   "duration_ms": 213573},
-        "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook"
+        "webhook_url": "https://stemplayer.xxx.workers.dev/api/webhook",
+        "live": true                                # optional: stream to the browser
     }
 
     Spawns the GPU job and returns immediately — the Worker must not block
@@ -906,7 +1094,11 @@ def separate_api():
         if not _valid_input(given):
             raise HTTPException(status_code=400, detail="Invalid input")
 
-        Separator().separate.spawn(task_id, webhook_url, **given)
+        # Only a literal true: a Worker from before never sends it. And only
+        # passed when true: GPU containers from before a deploy go on taking
+        # songs for a while, and don't know the argument.
+        live = {"live": True} if item.get("live") is True else {}
+        Separator().separate.spawn(task_id, webhook_url, **live, **given)
         return {"task_id": item["task_id"], "status": "queued"}
 
     return web

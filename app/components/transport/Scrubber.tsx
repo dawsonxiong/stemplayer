@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AudioEngine } from "~/lib/audio/engine";
 import { usePlayerStore } from "~/lib/store";
 import { useAnimationFrame } from "~/hooks/useAnimationFrame";
@@ -17,6 +17,12 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
   const currentTime = usePlayerStore((s) => s.currentTime);
   const duration = usePlayerStore((s) => s.duration);
   const loop = usePlayerStore((s) => s.loop);
+  // While it's still separating: how much has arrived, and whether it's
+  // waiting for more.
+  const live = usePlayerStore((s) => s.live);
+  const liveLoaded = usePlayerStore((s) => s.liveLoaded);
+  const buffering = usePlayerStore((s) => s.buffering);
+  const setLiveLoaded = usePlayerStore((s) => s.setLiveLoaded);
 
   const trackRef = useRef<HTMLDivElement>(null);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -30,6 +36,18 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
     }, [audioEngine, isSeeking, setCurrentTime, setDuration]),
     isPlaying,
   );
+
+  // How much has arrived, while it's still separating, paused or not.
+  useEffect(() => {
+    if (!audioEngine || !live) return;
+    const tick = () => {
+      setLiveLoaded(audioEngine.loaded);
+      setDuration(audioEngine.duration);
+    };
+    tick();
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
+  }, [audioEngine, live, setDuration, setLiveLoaded]);
 
   const seekTo = useCallback(
     (time: number) => {
@@ -105,7 +123,8 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
       aria-valuemin={0}
       aria-valuemax={Math.round(duration)}
       aria-valuenow={Math.round(currentTime)}
-      aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}`}
+      aria-valuetext={`${formatTime(currentTime)} of ${formatTime(duration)}${buffering ? ", buffering" : ""}`}
+      aria-busy={buffering}
       className="group relative flex h-6 flex-1 cursor-pointer items-center rounded-full select-none"
       style={{ touchAction: "none" }}
       onPointerDown={handlePointerDown}
@@ -115,6 +134,14 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
       onKeyDown={handleKeyDown}
     >
       <div className="relative h-1.5 w-full rounded-full bg-well">
+        {/* What's arrived so far, while the song is still being separated */}
+        {live && (
+          <div
+            className="absolute top-0 left-0 h-full rounded-full bg-line-strong"
+            style={{ width: `${Math.min(100, pct(liveLoaded))}%` }}
+          />
+        )}
+
         {/* Loop region, or just its in point while the out point is pending */}
         {loop.start !== null && (
           <div
@@ -126,8 +153,9 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
           />
         )}
 
+        {/* Pulses while it waits for more of the song */}
         <div
-          className="absolute top-0 left-0 h-full rounded-full bg-ink"
+          className={`absolute top-0 left-0 h-full rounded-full bg-ink ${buffering ? "animate-pulse" : ""}`}
           style={{ width: `${progress}%` }}
         />
 
