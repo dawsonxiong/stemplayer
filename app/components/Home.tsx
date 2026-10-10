@@ -371,9 +371,12 @@ export function Home() {
           title comes first in the source, so on phones it sits above the
           device; on wide screens the grid puts it at the head of the right
           column, with the device spanning both rows. The second row flexes,
-          so the tall device can't open a gap under the title. */}
+          so the tall device can't open a gap under the title. The grid is
+          only as tall as that and centred by its margins: stretched to the
+          window, the flexing row took the spare height and pinned the pair
+          to the top as soon as a title appeared. */}
       <div
-        className={`flex w-full flex-1 flex-col items-center lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:content-center lg:items-start lg:gap-x-16 lg:gap-y-5 ${trackHeading ? "lg:grid-rows-[auto_1fr]" : ""}`}
+        className={`flex w-full flex-1 flex-col items-center lg:my-auto lg:grid lg:max-w-6xl lg:flex-none lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:items-start lg:gap-x-16 lg:gap-y-5 ${trackHeading ? "lg:grid-rows-[auto_1fr]" : ""}`}
       >
         {trackHeading && (
           <div className="relative z-10 mt-10 w-full max-w-sm lg:col-start-2 lg:row-start-1 lg:mt-0 lg:max-w-none">
