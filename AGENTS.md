@@ -6,6 +6,16 @@ Read `PLAN.md` for the full build plan and component specs.
 
 Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → job record in R2 → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 
+Live playback (behind flags, off by default) plays a song while it's still being separated. It races the flow above and never replaces it:
+
+- The browser opens `GET /api/live/<taskId>` as it posts `/api/separate` with `live: true`. The Worker passes `live` to Modal only when the `LIVE_PLAYBACK` var is `"on"`, and answers `{ live }`.
+- Modal's `_Live` (`modal/app.py`) opens a WebSocket to `{webhook origin}/api/live/<taskId>/ingest`, authed with `x-webhook-secret`, and sends each stem's MP3 as LAME makes it (`StreamingMP3(on_data=…)`), then `END` with the gains before the upload. It never blocks the encoders; if the relay can't be reached the job carries on and logs `timings.live_error`.
+- `LiveRelay` (`worker/live-relay.ts`), a Durable Object per task, holds the frames in memory and streams them to each reader, interleaved by audio time; a reader resumes with `?from=<offsets>&epoch=<n>`. An alarm clears it 2 minutes after the stream ends.
+- The framing is `app/lib/live-protocol.ts`: `u8 type | u8 stem | u32 value | u32 length | payload`, little-endian. Types: `HEADER`, `DATA` (value: byte offset), `STEM_END` (value: length), `END`, `RESET` (value: new epoch, when a song is separated again whole), `ABORT`, `KEEPALIVE`. `_Live` packs the same layout.
+- In the browser, `LiveSession` (`app/lib/audio/live.ts`) reads the stream, `live-decoder.worker.ts` decodes it with `mpg123-decoder` and posts PCM to one AudioWorklet node (`live-processor.ts`) with an output per stem, through the same gain → analyser → bus → effects → master → limiter graph. `AudioEngine.mode` is `"live"` then; seek, speed, loop and the recorder work in both modes.
+- At "ready", `AudioEngine.completeLive` keeps playing: a stem that streamed whole is its file already; one cut short is filled from its R2 file with a Range GET; one that was rescaled, or whose file doesn't match what streamed, carries on from the file at the frame decoding had reached. If any of that fails, `handOver` switches to the media files at the same position.
+- Turning it on takes `LIVE_PLAYBACK: "on"` in `wrangler.jsonc` (server) and, in the browser, `?live=1`, `localStorage["stemplayer:live"] = "1"` or a build with `VITE_LIVE_PLAYBACK=on` (`app/lib/audio/live-support.ts`).
+
 Loading the page wakes the Modal API (`/api/wake` → its `/health`), a small container that sleeps after 20 idle minutes and takes 3–6 s to start. Picking a song (choosing, dropping or pasting it, before Split) also asks Modal to start a GPU container (`/api/warm` → `app/lib/warm.server.ts` → the Modal API's `/warm`), so it boots while the person presses Split and the song uploads or is looked up. Modal starts at most one a minute however often it's asked.
 
 A song link skips the upload: `/api/link` parses it (`app/lib/links.ts`) and looks it up (`app/lib/links.server.ts`) → `/api/separate` → the Modal job has `fetch_link`, a small CPU function on Google Cloud, download the audio with yt-dlp, then carries on as above. Link audio that libsndfile can't read (YouTube's Opus and AAC) streams into separation through ffmpeg.
@@ -36,11 +46,11 @@ modal deploy modal/app.py
 **vinext, not Next.js, and not Vercel.** vinext reimplements the Next.js 16 API on Vite 8; the `next` package is not installed. Do not apply `next16-app` hosting defaults. Follow `cf-workers`.
 
 - App Router via vinext (`vinext()` in `vite.config.ts`). `app/layout.tsx` and `app/page.tsx` are server components; the player is one client tree under `app/components/Home.tsx` (`"use client"`). API endpoints are route handlers in `app/api/**/route.ts`, not server actions.
-- Cloudflare Workers — `wrangler.jsonc` points `main` at vinext's `vinext/server/fetch-handler`. Route handlers read bindings with `import { env } from "cloudflare:workers"`. wrangler + `@cloudflare/vite-plugin`.
+- Cloudflare Workers — `wrangler.jsonc` points `main` at `worker/index.ts`, which routes `/api/live/<taskId>` and `/api/live/<taskId>/ingest` to the `LIVE` Durable Object (`LiveRelay`, migration `v1`, SQLite-backed but storing nothing) and hands everything else to vinext's `vinext/server/fetch-handler`. Durable Objects must be exported from that file. Route handlers read bindings with `import { env } from "cloudflare:workers"`. wrangler + `@cloudflare/vite-plugin`.
 - `pnpm typecheck` runs `vinext typegen`, which writes `next-env.d.ts` and `.next/types` (`RouteContext<"/api/...">`). Both are generated and gitignored.
 - R2 (`AUDIO_BUCKET`) for uploads, stems and job records (`stems/<taskId>/job.json`, via `app/lib/jobs.server.ts`); KV (`JOBS`) for the stem cache index and rate limits. The bucket's lifecycle rules, set on the bucket rather than in code, expire `stems/` (job records included) after 14 days and `uploads/` after 1.
 - Modal (`modal/app.py`) runs Demucs 4.0.1's `htdemucs` on an A10 through stemsep, a faster runner for it, vendored at `modal/stemsep/` from the private repo `dawsonxiong/stemsep`. Don't edit the vendored copy: change stemsep, then run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Its benchmarks and the reasons behind `SEPARATOR_CONFIG` live there.
-- Three.js via `@react-three/fiber` + drei; zustand; framer-motion; aws4fetch.
+- Three.js via `@react-three/fiber` + drei; zustand; framer-motion; aws4fetch; `mpg123-decoder` (WASM MP3 decoding for live playback, in a Worker).
 - Tailwind v4 via `@tailwindcss/vite`. No shadcn/ui.
 - pnpm.
 
@@ -57,7 +67,8 @@ Use classes, not inline `style` or arbitrary values like `text-[13px]`. If nothi
 
 ## Hard rules
 
-- Audio state lives in zustand, never in React state. Never re-create the `AudioContext`.
+- Audio state lives in zustand, never in React state. Never re-create the `AudioContext`. With live playback it's created in the Split click by `AudioEngine.prime()`, at 44.1 kHz, which iOS needs to start audio and to play through the silent switch.
+- A `fetch` of a stem URL an `<audio>` element is already loading waits for that load in Chrome: use `cache: "no-store"` (as `completeLive` does).
 - Secrets are wrangler secrets, not vars: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `WEBHOOK_SECRET`.
 - Modal secrets: `r2-creds`, `stemplayer-webhook` (`WEBHOOK_SECRET`), `stemplayer-apify` (`APIFY_TOKEN`). A missing one fails the Modal deploy.
 - Verify the webhook secret in `app/api/webhook/route.ts` against `WEBHOOK_SECRET`. The same secret is the bearer token the Worker sends to Modal (Modal secret `stemplayer-webhook`).
