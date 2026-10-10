@@ -187,14 +187,18 @@ body {
   overflow-x: hidden;
 }
 
-/* Subtle warm vignette */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: radial-gradient(ellipse at 50% 40%, transparent 40%, rgba(0, 0, 0, 0.03) 100%);
-  pointer-events: none;
-  z-index: 0;
+/* Subtle warm vignette, on wide screens only. On phones it darkened the
+   page's top and bottom edges against Safari's bars, which take the plain
+   page colour (theme-color) and showed as a lighter band. */
+@media (min-width: 64rem) {
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 40%, transparent 40%, rgba(0, 0, 0, 0.03) 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
 }
 
 * {
