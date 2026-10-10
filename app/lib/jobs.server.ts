@@ -15,7 +15,13 @@ const key = (taskId: string) => `stems/${taskId}/job.json`;
 // Every task ID is a crypto.randomUUID(). The ID comes from the URL or the
 // request body, so anything else is junk: a '/' would reach outside the task's
 // folder, and the KV fallback would read a cache index or rate-limit key.
-const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Whether jobs may stream their stems to the browser as they encode: the
+ *  LIVE_PLAYBACK var, "on" or "off". */
+export function liveEnabled(bindings: { LIVE_PLAYBACK?: string } = env): boolean {
+  return bindings.LIVE_PLAYBACK === "on";
+}
 
 export async function getJob<T>(taskId: string): Promise<T | null> {
   if (typeof taskId !== "string" || !TASK_ID.test(taskId)) return null;

@@ -1,10 +1,14 @@
 import { env } from "cloudflare:workers";
-import { getJob, putJob } from "~/lib/jobs.server";
+import { getJob, liveEnabled, putJob } from "~/lib/jobs.server";
 import { SEPARATIONS_PER_HOUR } from "~/lib/constants";
 import type { FetchSpec } from "~/lib/links.server";
 
 export async function POST(request: Request) {
-  const { taskId } = (await request.json()) as { taskId: string };
+  const body = (await request.json()) as { taskId: string; live?: boolean };
+  const { taskId } = body;
+  // Streamed to the browser while it encodes, through /api/live/<taskId>,
+  // only when the browser can play that and live playback is switched on.
+  const live = body.live === true && liveEnabled();
 
   // An upload has an R2 key; a link says what the job should fetch instead.
   const jobData = await getJob<{
@@ -19,7 +23,7 @@ export async function POST(request: Request) {
 
   // Each upload gets one GPU run. Retries of this request are no-ops.
   if (jobData.status !== "uploaded") {
-    return Response.json({ status: jobData.status });
+    return Response.json({ status: jobData.status, live: false });
   }
 
   // Approximate per-IP limit. KV is eventually consistent, so a burst can
@@ -56,6 +60,8 @@ export async function POST(request: Request) {
       task_id: taskId,
       ...(jobData.fetch ?? { input_r2_key: jobData.r2Key }),
       webhook_url: `${origin}/api/webhook`,
+      // The job finds the relay from webhook_url's origin.
+      ...(live && { live: true }),
     }),
   }).catch((err: unknown) => err as Error);
 
@@ -71,5 +77,5 @@ export async function POST(request: Request) {
     return Response.json({ error: "Separation failed to start" }, { status: 502 });
   }
 
-  return Response.json({ status: "processing" });
+  return Response.json({ status: "processing", live });
 }
