@@ -170,6 +170,9 @@ def _download(url: str, tmpdir: str) -> dict:
         # server, not the song, so say so rather than blame the link.
         if "confirm you’re not a bot" in str(e) or "confirm you're not a bot" in str(e):
             raise YouTubeBlocked(YOUTUBE_REFUSED) from e
+        # Or it lets the server look the video up and then refuses the audio.
+        if "youtube.com" in url and "HTTP Error 403" in str(e):
+            raise YouTubeBlocked(YOUTUBE_REFUSED) from e
         if "confirm your age" in str(e):
             raise UserError(AGE_RESTRICTED) from e
         # The detail goes to the logs, not the person.
@@ -232,37 +235,31 @@ def _download_via_apify(video_id: str, tmpdir: str) -> dict:
     return {"title": item.get("title"), "requested_downloads": [{"filepath": path}]}
 
 
-@app.function(
-    image=fetch_image,
-    # For a video YouTube gates, it asked every container on AWS, Azure and
-    # Oracle (where the A10s are) to sign in, 21 of 21. On Google
-    # Cloud it let 30 of 30 through outside Ashburn, and 0 of 4 in it. So
-    # links download here, and Apify, which took 44–168 s and ~5–8¢ a song,
-    # is only for the rare refusal here too. Pinning a narrow region costs
-    # 1.75x, on a second or two of one CPU.
-    cloud="gcp",
-    region="us-central",
-    cpu=1.0,
-    memory=1024,
-    timeout=300,
-    scaledown_window=60,
-    secrets=[apify_secret],
+# How fetch_link and its stand-ins run. For a video YouTube gates, it asked
+# every container on AWS, Azure and Oracle (where the A10s are) to sign in,
+# 21 of 21, and let most on Google Cloud through. It refuses an address, not
+# a video, and containers in one region often share an address, so the
+# stand-ins are in other regions. Apify, at 44–168 s and ~5–8¢ a song, is
+# for when every one is refused (see _fetch).
+FETCH_FUNCTION = dict(
+    image=fetch_image, cloud="gcp", cpu=1.0, memory=1024, timeout=300, scaledown_window=60
 )
-def fetch_link(url: str | None, youtube_id: str | None = None) -> dict:
+
+
+def _fetch_link(url: str | None) -> dict:
     """A song link's audio as {"data", "ext", "title"}, or the UserError it
-    met as {"error", "blocked", "cause"}, for _separate to raise again. No
+    met as {"error", "blocked", "cause"}, for _fetch to raise again. No
     url: nothing, to start a container ahead of a song."""
     if not url:
         return {}
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
-            try:
-                info = _download(url, tmpdir)
-            except YouTubeBlocked:
-                if not youtube_id:
-                    raise
-                info = _download_via_apify(youtube_id, tmpdir)
+            info = _download(url, tmpdir)
         except UserError as e:
+            if isinstance(e, YouTubeBlocked):
+                # YouTube refuses an address, not a video, so this container
+                # takes no more songs, which would only meet the same refusal.
+                modal.experimental.stop_fetching_inputs()
             return {
                 "error": str(e),
                 "blocked": isinstance(e, YouTubeBlocked),
@@ -272,6 +269,68 @@ def fetch_link(url: str | None, youtube_id: str | None = None) -> dict:
         with open(path, "rb") as f:
             data = f.read()
     return {"data": data, "ext": os.path.splitext(path)[1], "title": info.get("title")}
+
+
+# Pinning a narrow region costs 1.75x, on a second or two of one CPU.
+@app.function(region="us-central", **FETCH_FUNCTION)
+def fetch_link(url: str | None) -> dict:
+    return _fetch_link(url)
+
+
+@app.function(region="us-east", **FETCH_FUNCTION)
+def fetch_link_east(url: str) -> dict:
+    return _fetch_link(url)
+
+
+@app.function(region="us-west", **FETCH_FUNCTION)
+def fetch_link_west(url: str) -> dict:
+    return _fetch_link(url)
+
+
+@app.function(region="eu-west", **FETCH_FUNCTION)
+def fetch_link_eu(url: str) -> dict:
+    return _fetch_link(url)
+
+
+# Where a refused YouTube download is tried again, all at once, before
+# Apify. On 2026-10-10, with us-central refusing two videos on 2 of 3
+# containers, us-east and eu-west let 3 of 3 through and us-west 2 of 3. A
+# refusal comes back in ~1–1.7 s and a cold container downloads in ~5–7 s.
+FETCH_STAND_INS = (fetch_link_east, fetch_link_west, fetch_link_eu)
+
+
+def _fetch(url: str, youtube_id: str | None, tmpdir: str) -> tuple[str, str | None]:
+    """Download a link's audio through fetch_link, retrying a YouTube refusal
+    in other regions and then through Apify. Returns its path and title."""
+    from concurrent.futures import as_completed
+
+    got = fetch_link.remote(url)
+    if got.get("blocked") and youtube_id:
+        pool = ThreadPoolExecutor(len(FETCH_STAND_INS))
+        tries = [pool.submit(fn.remote, url) for fn in FETCH_STAND_INS]
+        for done in as_completed(tries):
+            try:
+                result = done.result()
+            except Exception:
+                continue  # one container failing isn't the song's fault
+            # Only the audio itself wins: a stand-in can fail for its own
+            # reasons, as a video blocked in its region, and the first
+            # refusal already says the song itself is fine.
+            if "data" in result:
+                got = result
+                break
+        # The others finish on their own; the song doesn't wait for them.
+        pool.shutdown(wait=False, cancel_futures=True)
+    if got.get("blocked") and youtube_id:
+        info = _download_via_apify(youtube_id, tmpdir)
+        return info["requested_downloads"][0]["filepath"], info.get("title")
+    if "error" in got:
+        error = YouTubeBlocked if got["blocked"] else UserError
+        raise error(got["error"]) from RuntimeError(got["cause"])
+    path = os.path.join(tmpdir, "input_audio" + got["ext"])
+    with open(path, "wb") as f:
+        f.write(got["data"])
+    return path, got["title"]
 
 
 # Words that mark a different recording of a song: only a problem when the
@@ -624,14 +683,7 @@ def _separate(
 
             with timed("fetch"):
                 if url:
-                    got = fetch_link.remote(url, youtube_id)
-                    if "error" in got:
-                        error = YouTubeBlocked if got["blocked"] else UserError
-                        raise error(got["error"]) from RuntimeError(got["cause"])
-                    input_path = os.path.join(tmpdir, "input_audio" + got["ext"])
-                    with open(input_path, "wb") as f:
-                        f.write(got["data"])
-                    title = got["title"]
+                    input_path, title = _fetch(url, youtube_id, tmpdir)
                 else:
                     input_path = os.path.join(tmpdir, "input_audio")
                     s3.download_file(bucket, input_r2_key, input_path)
