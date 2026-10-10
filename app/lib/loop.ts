@@ -11,6 +11,7 @@ export function cycleLoop(audioEngine: AudioEngine | null) {
 
   if (loop.start === null) {
     setLoop({ start: now, end: null });
+    audioEngine.setLoopIn(now);
   } else if (loop.end === null && now - loop.start >= MIN_LOOP_SECONDS) {
     setLoop({ end: now });
     audioEngine.setLoop(loop.start, now);

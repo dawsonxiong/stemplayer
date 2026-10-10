@@ -9,6 +9,7 @@ export function useAudioEngine() {
   useEffect(() => {
     const e = new AudioEngine();
     e.onEnded = () => usePlayerStore.getState().setPlaying(false);
+    e.onBuffering = (buffering) => usePlayerStore.getState().setBuffering(buffering);
     engineRef.current = e;
     setEngine(e);
 

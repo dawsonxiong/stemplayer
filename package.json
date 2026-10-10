@@ -20,6 +20,7 @@
     "@react-three/fiber": "^9.8.1",
     "aws4fetch": "^1.0.20",
     "framer-motion": "^12.7.0",
+    "mpg123-decoder": "^1.0.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-server-dom-webpack": "^19.3.0",
