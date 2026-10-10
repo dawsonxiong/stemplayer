@@ -131,8 +131,10 @@ export function Home() {
       /** Plays the song from its live stream once enough of it has arrived,
        *  while `separate` waits for the finished files: whichever comes
        *  first. The files still finish the job either way. */
+      let liveOpened = false;
       const startLive = (taskId: string, started: ReturnType<typeof triggerSeparation>) => {
-        if (!live || !audioEngine) return;
+        if (!live || !audioEngine || liveOpened) return;
+        liveOpened = true;
         const session = new LiveSession(taskId);
         // A server with live playback off says so: stop asking.
         started.then(
@@ -220,6 +222,9 @@ export function Home() {
             if (ticket.title) store.setTrackTitle(ticket.title);
             const started = triggerSeparation(taskId, { live });
             started.catch(() => {}); // reported by separate, after the hold
+            // Now rather than after the hold, so the relay starts out near the
+            // person, not near Modal.
+            startLive(taskId, started);
             await shown;
             finished = await separate(taskId, started);
           } else {

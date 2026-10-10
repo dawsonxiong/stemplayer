@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AudioEngine } from "~/lib/audio/engine";
 import { usePlayerStore } from "~/lib/store";
 import { useAnimationFrame } from "~/hooks/useAnimationFrame";
@@ -30,14 +30,24 @@ export function Scrubber({ audioEngine }: ScrubberProps) {
   // Sync time from engine
   useAnimationFrame(
     useCallback(() => {
-      if (!audioEngine) return;
-      if (live) setLiveLoaded(audioEngine.loaded);
-      if (isSeeking) return;
+      if (!audioEngine || isSeeking) return;
       setCurrentTime(audioEngine.currentTime);
       setDuration(audioEngine.duration);
-    }, [audioEngine, isSeeking, live, setCurrentTime, setDuration, setLiveLoaded]),
-    isPlaying || live,
+    }, [audioEngine, isSeeking, setCurrentTime, setDuration]),
+    isPlaying,
   );
+
+  // How much has arrived, while it's still separating, paused or not.
+  useEffect(() => {
+    if (!audioEngine || !live) return;
+    const tick = () => {
+      setLiveLoaded(audioEngine.loaded);
+      setDuration(audioEngine.duration);
+    };
+    tick();
+    const timer = setInterval(tick, 250);
+    return () => clearInterval(timer);
+  }, [audioEngine, live, setDuration, setLiveLoaded]);
 
   const seekTo = useCallback(
     (time: number) => {

@@ -956,8 +956,9 @@ def _separate(
                 )
 
         if streamer:
-            # Long since sent, as a rule: END went before the upload.
-            streamer.close()
+            # Long since sent, as a rule: END went before the upload. Not
+            # waited on for long, so a slow relay can't hold the GPU.
+            streamer.close(wait=0.5)
             timings.update(streamer.timings())
         print(json.dumps({"task_id": task_id, "timings": timings}))
         return {"task_id": task_id, "status": "complete", "timings": timings}
@@ -986,7 +987,7 @@ def _separate(
         # handler above; don't leave its reports to mix with the next song's.
         reporter.shutdown(wait=False, cancel_futures=True)
         if streamer:
-            streamer.close(wait=2.0)
+            streamer.close(wait=0)
 
 
 def _valid_input(given: dict) -> bool:
@@ -1093,9 +1094,11 @@ def separate_api():
         if not _valid_input(given):
             raise HTTPException(status_code=400, detail="Invalid input")
 
-        # Only a literal true: a Worker from before never sends it.
-        live = item.get("live") is True
-        Separator().separate.spawn(task_id, webhook_url, live=live, **given)
+        # Only a literal true: a Worker from before never sends it. And only
+        # passed when true: GPU containers from before a deploy go on taking
+        # songs for a while, and don't know the argument.
+        live = {"live": True} if item.get("live") is True else {}
+        Separator().separate.spawn(task_id, webhook_url, **live, **given)
         return {"task_id": item["task_id"], "status": "queued"}
 
     return web

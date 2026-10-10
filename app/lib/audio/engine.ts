@@ -8,6 +8,7 @@ import type { FromPlayerNode, PlayerOptions, ToPlayer } from "./live-processor";
 // oxlint-disable-next-line import/default
 import processorUrl from "./live-processor.ts?worker&url";
 import type { LiveSession } from "./live";
+import { liveEnabled } from "./live-support";
 import { MixRecorder } from "./recorder";
 
 interface StemNode {
@@ -82,6 +83,10 @@ export class AudioEngine {
 
   private getContext(): AudioContext {
     if (!this.ctx) {
+      // At the live player's rate whenever live playback may be used, even if
+      // a song plays from its files first: the context is made once, and the
+      // live player only plays without resampling at its own rate.
+      this.preferredRate ??= liveEnabled() ? LIVE_RATE : undefined;
       try {
         this.ctx = new AudioContext(
           this.preferredRate ? { sampleRate: this.preferredRate } : undefined,
