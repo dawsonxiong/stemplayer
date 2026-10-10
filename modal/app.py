@@ -273,7 +273,9 @@ def _fetch_link(url: str | None) -> dict:
 
 # Pinning a narrow region costs 1.75x, on a second or two of one CPU.
 @app.function(region="us-central", **FETCH_FUNCTION)
-def fetch_link(url: str | None) -> dict:
+def fetch_link(url: str | None, youtube_id: str | None = None) -> dict:
+    # `youtube_id` is unused, kept for GPU containers from before a deploy,
+    # which go on taking songs for a while and still pass it.
     return _fetch_link(url)
 
 
