@@ -1,10 +1,11 @@
 /** Whether to play a song while it's still being separated (live playback),
  *  rather than once its stems are done.
  *
- *  Off unless asked for: `?live=1` (or `?live=0`), or
- *  `localStorage["stemplayer:live"] = "1"`, over the build's default,
- *  VITE_LIVE_PLAYBACK=on. The server has its own switch, LIVE_PLAYBACK, and
- *  without it a request for live playback falls back to waiting. */
+ *  On unless turned off: `?live=0` (or `?live=1`), or
+ *  `localStorage["stemplayer:live"] = "0"`, over the build's default,
+ *  which VITE_LIVE_PLAYBACK=off turns off. The server has its own switch,
+ *  LIVE_PLAYBACK, and without it a request for live playback falls back to
+ *  waiting. */
 
 const STORAGE_KEY = "stemplayer:live";
 
@@ -17,7 +18,7 @@ function requested(): boolean {
   } catch {
     // Storage blocked: the default stands.
   }
-  return import.meta.env.VITE_LIVE_PLAYBACK === "on";
+  return import.meta.env.VITE_LIVE_PLAYBACK !== "off";
 }
 
 /** Everything the live player needs: an AudioWorklet, WebAssembly for the

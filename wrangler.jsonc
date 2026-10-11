@@ -42,7 +42,7 @@
     "MODAL_ENDPOINT": "https://dawsonxiong--stem-demucs-separate-api.modal.run",
     "R2_PUBLIC_ENDPOINT": "https://28cf8412596e686a740a117e47df06c4.r2.cloudflarestorage.com",
     // "on" lets /api/separate ask Modal to stream and opens /api/live/*.
-    "LIVE_PLAYBACK": "off",
+    "LIVE_PLAYBACK": "on",
   },
 
   // Secrets (set via: npx wrangler secret put <NAME>):
