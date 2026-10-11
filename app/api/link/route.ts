@@ -41,6 +41,8 @@ export async function POST(request: Request) {
 
   // A GPU takes several seconds to start: let it start while the browser
   // carries on to /api/separate.
-  warmGpu();
+  // Spotify and Apple Music songs are found on YouTube, so they download
+  // from it too.
+  warmGpu({ youtube: link.provider !== "soundcloud" });
   return Response.json({ taskId, title: link.title });
 }

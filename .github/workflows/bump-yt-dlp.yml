@@ -1,0 +1,71 @@
+# YouTube changes what it serves every few weeks, and a pinned yt-dlp falls
+# behind: downloads start failing with 403s or missing formats until it's
+# bumped. Every Monday this checks PyPI and, if there's a newer release,
+# pushes a branch with the bump and proposes it. Merging it deploys Modal.
+name: Bump yt-dlp
+
+on:
+  schedule:
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare with PyPI
+        id: version
+        run: |
+          pypi() { curl -fsS "https://pypi.org/pypi/$1/json" | python3 -c "import json, sys; print(json.load(sys.stdin)['info']['version'])"; }
+          latest=$(pypi yt-dlp)
+          current=$(grep -oE 'yt-dlp\[default\]==[0-9.]+' modal/requirements.txt | cut -d= -f3)
+          # Only ever forward: a pin ahead of PyPI's stable (a nightly pinned
+          # to get past a breakage) is left alone.
+          newest=$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -1)
+          if [ "$newest" = "$latest" ] && [ "$latest" != "$current" ]; then bump=true; else bump=false; fi
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "deno=$(pypi deno)" >> "$GITHUB_OUTPUT"
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+          echo "pinned $current, PyPI has $latest: bump=$bump"
+      - name: Propose the bump
+        if: steps.version.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          CURRENT: ${{ steps.version.outputs.current }}
+          DENO: ${{ steps.version.outputs.deno }}
+        run: |
+          branch="deps/yt-dlp-$LATEST"
+          # Already proposed: leave that branch, its PR or its issue be.
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then exit 0; fi
+          # Every pin, whatever it says now, so none is left behind. Deno with
+          # it: yt-dlp solves YouTube's JavaScript challenges with it, and a
+          # newer yt-dlp can need a newer one.
+          sed -E -i "s/yt-dlp\[default\]==[0-9.]+/yt-dlp[default]==$LATEST/g; s/deno==[0-9.]+/deno==$DENO/g" modal/app.py modal/requirements.txt
+          if grep -oE 'yt-dlp\[default\]==[0-9.]+' modal/app.py modal/requirements.txt | grep -v "==$LATEST$"; then
+            echo "a pin wasn't updated"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore: yt-dlp $LATEST"
+          git push origin "$branch"
+          # Earlier proposals are superseded by this one.
+          for old in $(git ls-remote --heads origin 'deps/yt-dlp-*' | sed 's#.*refs/heads/##' | grep -vx "$branch"); do
+            git push origin --delete "$old" || true
+          done
+          gh issue list --state open --search "in:title yt-dlp is out" --json number --jq '.[].number' \
+            | xargs -r -I{} gh issue close {} --comment "Superseded by yt-dlp $LATEST." || true
+          body="yt-dlp $LATEST is out; modal/ pinned $CURRENT. Deno goes to $DENO with it. Merging deploys Modal. Check a YouTube and a SoundCloud link afterwards."
+          # Opening a PR needs the repo setting "Allow GitHub Actions to create
+          # and approve pull requests"; without it, say so in an issue.
+          gh pr create --base main --head "$branch" --title "chore: yt-dlp $LATEST" --body "$body" \
+            || gh issue create --title "yt-dlp $LATEST is out" \
+                 --body "$body Branch: https://github.com/${{ github.repository }}/compare/main...$branch"

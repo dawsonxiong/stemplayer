@@ -116,6 +116,11 @@ Split → all four stems playable in the browser. Medians unless noted; all from
 - **Loud songs:** a stem that clips in its first stretch stops streaming, so the song gets no early start and plays from the files. Phase 5 of the plan (`StreamingMP3(stream_through_rescale=True)` in stemsep) fixes that.
 - **Rescaled-stem splice:** it downloads the whole stem rather than a Range from the current frame. Rare, and only costs bandwidth.
 - **Apify's cap:** $5 a month is ~60–80 refused songs. With the region stand-ins it should rarely run; check `modal app logs stem-demucs` for refusals.
+- **YouTube refusals, researched 2026-10-11:**
+  - **Per address, all or nothing:** on 24 Google Cloud containers, a refused IP was refused for all 5 gated videos and an accepted one for none. us-central, us-west and eu-west let 12 of 12 through, us-east 2 of 4, Tokyo and Singapore 0 of 8.
+  - **What doesn't help:** the newest yt-dlp made no difference, Modal containers have no IPv6, and PO tokens no longer get past the check according to their maintainers.
+  - **What's done:** the stand-ins are now warmed when a YouTube link is pasted (2.5 s instead of 6 s), and a weekly workflow proposes yt-dlp bumps. It opens an issue instead of a PR until the repo allows Actions to create PRs.
+  - **What's left:** a residential proxy (`yt-dlp --proxy`, ~1–3¢ and ~3–8 s a song) would replace Apify's 44–168 s, but needs a provider account. Raw rows are in stemsep `results/youtube-refusals.jsonl`.
 - **Real-user timing:** none is collected. Everything here was measured from one Mac with simulated networks.
 
 ## Measuring
