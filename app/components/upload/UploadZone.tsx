@@ -38,7 +38,8 @@ export function UploadZone({ onFileSelected, onLinkSubmitted }: UploadZoneProps)
     // A GPU takes seconds to start: start one while Split is still to press.
     // Not for an album or playlist, which Split turns away.
     const parsed = parseLink(url.trim());
-    if (parsed && parsed.kind !== "collection") warmGpu();
+    if (parsed && parsed.kind !== "collection")
+      warmGpu({ youtube: parsed.provider !== "soundcloud" });
   }, []);
 
   const split = useCallback(() => {

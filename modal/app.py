@@ -416,17 +416,17 @@ def fetch_link(url: str | None, youtube_id: str | None = None) -> dict:
 
 
 @app.function(region="us-east", **FETCH_FUNCTION)
-def fetch_link_east(url: str) -> dict:
+def fetch_link_east(url: str | None) -> dict:
     return _fetch_link(url)
 
 
 @app.function(region="us-west", **FETCH_FUNCTION)
-def fetch_link_west(url: str) -> dict:
+def fetch_link_west(url: str | None) -> dict:
     return _fetch_link(url)
 
 
 @app.function(region="eu-west", **FETCH_FUNCTION)
-def fetch_link_eu(url: str) -> dict:
+def fetch_link_eu(url: str | None) -> dict:
     return _fetch_link(url)
 
 
@@ -1041,6 +1041,7 @@ def separate_api():
 
     web = FastAPI()
     last_warm = 0.0
+    last_stand_in_warm = 0.0
     # FastAPI runs these handlers on a thread pool.
     warm_lock = threading.Lock()
 
@@ -1056,20 +1057,31 @@ def separate_api():
         return {"ok": True}
 
     @web.post("/warm", status_code=202)
-    def warm(authorization: str = Header("")):
+    def warm(youtube: bool = False, authorization: str = Header("")):
         """Called when someone picks a song, so a GPU container starts while
         it uploads. At most once a minute: a container stays up a minute after
-        its last input, and a burst of picks shouldn't start a crowd."""
-        nonlocal last_warm
+        its last input, and a burst of picks shouldn't start a crowd.
+
+        With `youtube`, a song that downloads from YouTube, the downloaders in
+        other regions start too (also once a minute). When YouTube refuses the
+        first, a warm stand-in answers in ~1–3 s instead of ~5–7 s cold."""
+        nonlocal last_warm, last_stand_in_warm
         authorized(authorization)
         with warm_lock:
             now = time.monotonic()
-            if now - last_warm < 60:
-                return {"status": "warming"}
-            last_warm = now
-        Separator().warm.spawn()
-        # A cold fetch_link adds ~5 s to a link's download; warm, ~0.5 s.
-        fetch_link.spawn(None)
+            gpu = now - last_warm >= 60
+            if gpu:
+                last_warm = now
+            stand_ins = youtube and now - last_stand_in_warm >= 60
+            if stand_ins:
+                last_stand_in_warm = now
+        if gpu:
+            Separator().warm.spawn()
+            # A cold fetch_link adds ~5 s to a link's download; warm, ~0.5 s.
+            fetch_link.spawn(None)
+        if stand_ins:
+            for stand_in in FETCH_STAND_INS:
+                stand_in.spawn(None)
         return {"status": "warming"}
 
     @web.post("/")

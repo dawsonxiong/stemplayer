@@ -1,0 +1,51 @@
+# YouTube changes what it serves every few weeks, and a pinned yt-dlp falls
+# behind: downloads start failing with 403s or missing formats until it's
+# bumped. Every Monday this checks PyPI and, if there's a newer release,
+# pushes a branch with the bump and proposes it. Merging it deploys Modal.
+name: Bump yt-dlp
+
+on:
+  schedule:
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare with PyPI
+        id: version
+        run: |
+          latest=$(curl -fsS https://pypi.org/pypi/yt-dlp/json | python3 -c "import json, sys; print(json.load(sys.stdin)['info']['version'])")
+          current=$(grep -oE 'yt-dlp\[default\]==[0-9.]+' modal/requirements.txt | cut -d= -f3)
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "pinned $current, PyPI has $latest"
+      - name: Propose the bump
+        if: steps.version.outputs.latest != steps.version.outputs.current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          CURRENT: ${{ steps.version.outputs.current }}
+        run: |
+          branch="deps/yt-dlp-$LATEST"
+          # Already proposed: leave that branch, its PR or its issue be.
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then exit 0; fi
+          sed -i "s/yt-dlp\[default\]==$CURRENT/yt-dlp[default]==$LATEST/g" modal/app.py modal/requirements.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore: yt-dlp $LATEST"
+          git push origin "$branch"
+          body="yt-dlp $LATEST is out; modal/ pins $CURRENT. Merging deploys Modal. Check a YouTube and a SoundCloud link afterwards."
+          # Opening a PR needs the repo setting "Allow GitHub Actions to create
+          # and approve pull requests"; without it, say so in an issue.
+          gh pr create --base main --head "$branch" --title "chore: yt-dlp $LATEST" --body "$body" \
+            || gh issue create --title "yt-dlp $LATEST is out" \
+                 --body "$body Branch: https://github.com/${{ github.repository }}/compare/main...$branch"

@@ -261,11 +261,19 @@ export async function fetchStemUrls(taskId: string) {
 }
 
 let lastWarm = 0;
+let lastYouTubeWarm = 0;
 
 /** Starts a GPU for a song that's been picked but not yet split, so it's up
- *  sooner. Once a minute at most: a link field calls this as it's typed. */
-export function warmGpu(): void {
-  if (Date.now() - lastWarm < 60_000) return;
-  lastWarm = Date.now();
-  void fetch("/api/warm", { method: "POST" }).catch(() => {});
+ *  sooner. Once a minute at most: a link field calls this as it's typed.
+ *  With `youtube`, a song that downloads from YouTube (a YouTube, Spotify or
+ *  Apple Music link) also starts the downloaders that stand in when YouTube
+ *  refuses the first. */
+export function warmGpu({ youtube = false } = {}): void {
+  const now = Date.now();
+  const gpu = now - lastWarm >= 60_000;
+  const standIns = youtube && now - lastYouTubeWarm >= 60_000;
+  if (!gpu && !standIns) return;
+  if (gpu) lastWarm = now;
+  if (standIns) lastYouTubeWarm = now;
+  void fetch(standIns ? "/api/warm?youtube=1" : "/api/warm", { method: "POST" }).catch(() => {});
 }
