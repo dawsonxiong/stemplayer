@@ -120,24 +120,25 @@
     scale: 0.98;
   }
 }
-/* The round transport buttons: play, loop, record. */
+/* The transport buttons: play, loop, record. */
 @utility btn-icon {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: calc(infinity * 1px);
-  border: 1px solid var(--color-line);
-  background-color: var(--color-page);
+  /* No circle at rest, so loop and record sit quietly beside play; the
+     border is there for an active state's colour class (loop cyan, record
+     red) to draw. */
+  border: 1px solid transparent;
   transition-property: scale, border-color, background-color;
   transition-duration: 150ms;
-  /* Low weight, so an active button's colour class (loop cyan, record red)
-     keeps its border under the pointer. */
+  /* Low weight, so those colour classes still win under the pointer. */
   @media (hover: hover) {
     &:where(:hover:not(:disabled)) {
-      border-color: var(--color-line-strong);
+      background-color: var(--color-well);
     }
   }
   &:active {
