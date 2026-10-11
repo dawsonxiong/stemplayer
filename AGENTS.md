@@ -2,7 +2,7 @@
 
 A browser replica of the Stem Player device. Upload a song, it's separated into 4 stems (vocals, drums, bass, other) by Demucs on a serverless GPU, and you mix them in real time by dragging LED sliders on a photorealistic circular device.
 
-Read `PLAN.md` for the full build plan and component specs, and `docs/handoff.md` for the separation performance work (stemsep, R2 job records, stem gains, GPU prewarm).
+Read `PLAN.md` for the full build plan and component specs, and `docs/handoff.md` for the performance work: stemsep, R2 job records, stem gains, GPU prewarm, link downloads on Google Cloud, live playback, and how it was all measured.
 
 Data flow: upload → R2 (presigned PUT) → `/api/separate` → Modal GPU (Demucs) → webhook → job record in R2 → client polls `/api/status` → `/api/stems` serves stem URLs → Web Audio API.
 

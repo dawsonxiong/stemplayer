@@ -1,80 +1,140 @@
-# Handoff: separation performance work (2026-10-08)
+# Handoff: performance work (2026-10-08 to 2026-10-11)
 
 ## Where things stand
-- **stemplayer** (`dawsonxiong/stemplayer`): PRs #6 → #7 → #8 are squash-merged into `main` and deployed by CI. Production smoke checks pass; no real song has been split in production since the deploy.
-- **stemsep** (`dawsonxiong/stemsep`, private): the separation engine, its benchmarks and results. It's vendored into stemplayer at `modal/stemsep/` with `scripts/vendor.sh ../stemplayer/modal/stemsep`. Never edit the vendored copy; change stemsep and re-vendor.
-- **Leftover branch:** `dawson/fetch-on-cpu` is on GitHub, unmerged. It's a measured-and-dropped experiment and is safe to delete.
+Everything below is merged into `main` and deployed by CI.
+- **First pass** (#6, #7, #8): stemsep on an A10, job records in R2, stems stored 6 dB down.
+- **Second pass** (#10–#17): measured against the old stack in real browsers, then:
+  - the GPU is pinned to the US;
+  - uploads start when a song is picked;
+  - links download on Google Cloud;
+  - songs play while they separate (live playback), which is on in production.
 
-## stemsep (engine)
-- **`model.py`**: splits `HTDemucs.forward` into three parts so only the network changes per backend:
-  - `pre`: STFT and normalization, in fp32.
-  - `Core`: the encoders, cross-transformer and decoders.
-  - `post`: mask and iSTFT, in fp32.
-- **`engine.py`, `Separator.separate`**:
-  - Chunks are batched (8 per pass) and cross-faded with demucs's triangular window.
-  - The network runs under fp16 autocast with 10% overlap; cuDNN autotune is off, because it cost ~12 s of cold start for no gain.
-  - `sink=` streams finished stretches as they're done, and `first_batch=2` gets the first stretch out sooner.
-  - Backends: `eager` (shipped), `compile`, and `onnx` (`onnx_backend.py`, ORT CUDA/TensorRT, not shipped).
-- **`Separator.separate_stream`**: separates while the song is still being decoded.
-  - Chunks start at a fixed stride, plus one final chunk flush with the end.
-  - It skips the song-level normalization, which was measured to be quality-neutral.
-- **`audio.py`**:
-  - `decode`: libsndfile for MP3/WAV/FLAC/Ogg, with an ffmpeg fallback that matches demucs's channel mapping. It also falls back to ffmpeg when libsndfile would read a file short.
-  - `decode_blocks`: block-wise decoding for streaming. It raises `NotStreamable` when the job should fall back to decoding the whole file.
-  - `mp3_bytes`: lameenc at LAME q5, 192 kbps CBR.
-  - `StreamingMP3`: encodes while separating, with `gain=` and the resulting `gains`. A stem that would clip stops its streamed encode and is re-encoded whole; those stems are listed in `rescaled`. It also has an `on_data` hook.
-- **`bench/`**: Modal benchmark apps for the GPU sweep, end-to-end runs, quality, cold start, encoding, ONNX, VBR, headroom and streaming decode. Every number in stemsep's README traces to a file in its `results/`.
+Other places:
+- **stemsep** (`dawsonxiong/stemsep`, private): the separation engine and every benchmark. It's vendored at `modal/stemsep/`; change it there and run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Never edit the vendored copy. Its README's "Fourth pass" covers the browser measurements behind this pass.
+- **Plans:** `docs/plans/progressive-playback.md` is the live playback plan and its phase-0 probe results. Phase 5 is still open.
+- **Leftover branches:**
+  - `dawson/fetch-on-cpu` on GitHub: a dropped experiment, safe to delete.
+  - `dawson/transport-buttons`, local only: the owner's unfinished quieter-transport-button styling, not pushed.
+- **No test infrastructure is running.** The bench Workers, their KV namespaces and Modal apps, and the live-playback probe were all deleted. "Measuring" below says how to bring a bench back.
 
-## stemplayer changes
-**Modal (`modal/app.py`)**
-- GPU A10, 4 CPUs, 8 GiB memory, `scaledown_window=60`. CPU memory snapshot; the GPU memory snapshot was tested and rejected.
-- Each container runs a background warm-up separation after restore, overlapping the first song's download.
-- Stems are stored at `STEM_GAIN = 0.5` (−6 dB), and the job reports each stem's actual stored gain as `stem_gains`.
-- Decoding happens while separating (`decode_blocks` → `separate_stream`, prefetched on a thread), with a fallback to whole-file decoding.
-- Progress webhooks go out from a background thread over a keep-alive session, and are drained before the final report. Each job logs and returns per-stage `timings`.
-- API: `GET /health` (page-load wake), `POST /warm` (spawns `Separator.warm`, deduplicated to once a minute), and `scaledown_window=1200`.
-- Link songs are still downloaded inside the GPU container. Doing it on a separate CPU container was slower.
+## What a split takes now
+Split → all four stems playable in the browser. Medians unless noted; all from Toronto.
 
-**Worker**
-- Job records moved from KV to R2 at `stems/<taskId>/job.json` (`app/lib/jobs.server.ts`), because KV's per-location caching delayed status 7–50 s.
-  - `getJob` falls back to KV; that fallback can be removed after 14 days.
-  - Writes are conditional on the ETag.
-  - Task IDs must be UUIDs.
-- **Stay on KV:** the stem-cache index and rate limits.
-- **Expiry:** the bucket's lifecycle rules (set on the bucket, not in code) expire `stems/` after 14 days and `uploads/` after 1 day.
-- `/api/status/<id>?since=` long-polls R2, and its ready response includes `load`, built by `app/lib/stems.server.ts`.
-- New routes: `/api/wake` and `/api/warm`.
-- The webhook stores `stemGains`, and `/api/stems` returns them as `gains`.
-- An unreachable Modal now marks the job as an error instead of leaving it processing forever.
+| | Old stack (387164c) | Now |
+|---|---|---|
+| Warm upload, 4 min MP3 | 60.6 s | 7.6 s production (n=2), 6.4 s on a pinned bench |
+| Cold upload | 59.9 s | 9.3 s |
+| First sound, with live playback | n/a | 1.5 s warm in Chromium (5.9 s without it) |
+| YouTube link that YouTube refused | 47.6–60.8 s, via Apify | 9.4–21.1 s, via another region |
 
-**Frontend**
-- `AudioEngine` plays each stem at 1 / its gain, and an over-only limiter (`DynamicsCompressorNode`, threshold 0 dBFS) stops loud soloed stems clipping.
-- The page wakes the API on load.
-- Picking or pasting a song calls `/api/warm` (client-throttled, skipped for playlists) and hashes the file early.
-- Link jobs start without waiting for the 1 s lookup display.
-- Status uses long-polling, with fallback to 1 s polling.
+- **Old stack:** most of its ~60 s was KV caching the job status for a minute.
+- **Live playback:**
+  - The agent's runs gave a median of 1.49 s (1.36–1.59) against 5.94 s.
+  - After rebasing onto #14 it was 2.9 s against 9.2 s, on a colder, differently placed bench.
+  - On production right after turning it on: 6.8 s to sound, files ready at 11.4 s, with the GPU still cold from the deploy.
 
-## Key results (245 s song)
-- **Job time:** warm 18.4 s → 5.0–6.0 s; cold 29–33 s → 6.4–8.0 s with the early GPU start.
-- **Status delay:** "ready" reached the browser 7–50 s late → ~0.25 s.
-- **Separation:** on the A10, 5.47 s → 1.88 s.
-- **Quality:** within 0.02 dB SDR of demucs on 12 MUSDB18-HQ songs.
-- **Cost:** about 0.54¢ → 0.15–0.30¢ per song. The idle tail went from 8.8¢ to 2.3¢.
+**Uploads are now bound by the person's uplink.** Simulated conditions, 3 splits each, 10 MB MP3 unless noted (`stemsep/results/browser/matrix.jsonl`):
 
-## Tried and dropped (details in stemsep `results/deployed.md`)
-- **Engine backends:** `torch.compile` compiles for 5–8 minutes. ONNX/TensorRT isn't worth the build time and image size.
-- **GPU memory snapshots:** worse cold starts in practice.
-- **Encoder settings:** VBR, custom LAME builds, and more CPU cores.
-- **R2 tweaks:** ranged downloads, other clients and socket buffers.
-- **Link downloads on a CPU container:** slower.
-- **Multipart stem uploads:** no gain for songs under ~8 minutes.
-- **T4:** 36% cheaper per session, but a median 17.5 s cold start against 5.5 s.
+| Condition | Upload done | Playable |
+|---|---|---|
+| Fast connection | before Split | 6.4–6.9 s |
+| Home 50/20 Mbps | 2.8 s | 9.4 s |
+| Same, Split 5 s after picking | before Split | 6.7 s |
+| 4G 20/8 Mbps, or a phone with a 4× slower CPU | 8.8–8.9 s | 15.4–15.6 s |
+| Slow home 25/5 Mbps | 15.0 s | 21.9 s |
+| Poor mobile 5/1.5 Mbps (5.9 MB) | 30.2 s | 37.0 s |
+| Home, 45 MB WAV | 17.4 s | 24.5 s |
 
-## Open decisions
-- Pinning the GPU to `region="us"`: ~0.3–0.6 s per job for a 15% higher price. Default placement can land in Frankfurt or Osaka, while the bucket is in eastern North America.
-- A full browser run with real secrets: `pnpm dev` needs 1Password approval.
+- Once the upload is in, the rest takes ~6.5 s whatever the latency, CPU or browser.
+- These runs predate live playback. With it, sound comes ~4 s sooner, but never before the upload is done.
+
+## Second pass, PR by PR
+- **#10 `region="us"`, upload on pick, snapshots after deploy.**
+  - **GPU placement:** left to choose, Modal put the A10 in Frankfurt, far from the bucket and the webhook. Warm splits went from 10.4 s to 8.4 s once pinned (+15% per GPU-second, ~0.03¢ a song).
+  - **Upload on pick:** the R2 upload starts when a file is picked (`uploadPicked` in `app/lib/api.ts`), and replacing or removing the file aborts it. At 20 Mbps up with Split pressed 2 s after the pick: 10.9 s → 8.8 s.
+  - **Snapshots after deploy:** a deploy discards the GPU's memory snapshots, and Modal keeps one per kind of machine. The first split after a deploy had waited 18 s. The deploy workflow now warms 6 containers at once (`warm(hold=20)`, ~20¢). That covers most of the snapshots, not all.
+- **#11 links on Google Cloud.**
+  - **Why:** Modal's A10s run on Oracle, where YouTube asks most containers to sign in, and every refusal went to Apify (44–168 s, 5–8.5¢ a song, account capped at $5 a month). Links now download in `fetch_link`, a 1-CPU function on `cloud="gcp"`, `region="us-central"`.
+  - **SoundCloud:** one-file formats come first (`bestaudio[protocol^=http]`), and HLS fragments download 8 at a time. Downloads went from 0.9–8.4 s (one took 22 s) to 0.07–1.1 s.
+  - **Streaming decode:** link audio that libsndfile can't read (Opus, AAC/m4a) is stream-decoded through ffmpeg (`_ffmpeg_blocks`), bit-identical to `decode`.
+- **#12 logs why a song falls back to decoding whole** (`not_streamable` in the job log). One Apify `.m4a` did this once in production. Fragmented and plain m4a stream fine locally, so check those logs if it happens again.
+- **#13 (layout):** the device stays centred once a song's title appears.
+- **#14 retries refused YouTube downloads in other regions.**
+  - **Why:** refusals follow the IP address, and containers in one region often share one. us-central refused two videos on 2 of 3 containers, while us-east and eu-west let 3 of 3 through.
+  - **How:** when `fetch_link` is refused, `fetch_link_east`, `_west` and `_eu` try at once. Only an actual download wins, not another error. A refused container takes no more songs (`stop_fetching_inputs`).
+  - **403s:** a YouTube 403 on the audio itself also counts as a refusal.
+  - **Apify** only runs if every region is refused.
+- **#15 (Safari):** the vignette only shows on wide screens. It darkened the page against Safari's bars on iPhone, which showed as a line (checked in the iOS simulator).
+- **#16 live playback**, phases 1–4 of the plan; **#17 turns it on.**
+  - **Modal → relay:** the GPU job streams each stem's MP3 frames over a WebSocket (`_Live` in `modal/app.py`) to `LiveRelay`, one Durable Object per task (`worker/live-relay.ts`, routed by `worker/index.ts`).
+  - **Relay → browser:** the browser reads them as one streaming GET, interleaved by audio time (`app/lib/audio/live.ts`), and decodes them with `mpg123-decoder` in a worker (`live-decoder.worker.ts`). One AudioWorklet plays all four stems in step (`live-processor.ts`).
+  - **At "ready":** a stem that streamed whole is already its file, and one cut short is filled from R2 with a Range GET. A rescaled stem is spliced from its new encoding at the current frame. If anything fails, playback switches to the media elements at the same spot (`completeLive` and `handOver` in `engine.ts`).
+  - **Checked on the bench:**
+    - a real iPhone (iOS 26.6), including silent mode and a locked screen;
+    - a loud song whose drums had to be re-encoded mid-song;
+    - no AudioWorklet, as on old browsers, which falls back to today's player;
+    - a job failing after playback started: it stops and shows the error.
+  - **Firefox is untested.** Playwright's Firefox can't start its content processes on this Mac.
+  - **To switch it off:** `LIVE_PLAYBACK: "off"` in `wrangler.jsonc` turns it off for everyone, and `?live=0` for one browser.
+
+## First pass (#6–#8)
+**stemsep**, the engine:
+- `model.py` splits `HTDemucs.forward` into fp32 `pre` (STFT, normalisation), `Core` and fp32 `post` (mask, iSTFT), so only `Core` changes per backend.
+- `engine.py` batches chunks 8 to a pass under fp16 autocast with 10% overlap, cross-faded with demucs's window.
+  - `sink=` streams finished stretches, and `first_batch=2` gets the first one out sooner.
+  - `separate_stream` separates while the song is still decoding.
+- `audio.py`:
+  - `decode` and `decode_blocks` (libsndfile, ffmpeg fallback);
+  - `StreamingMP3`, which encodes with LAME q5 at 192 kbps as stems come off the GPU, with `gain=`, `gains`, `rescaled` and the `on_data` hook that live playback uses.
+- Quality: within 0.02 dB SDR of demucs on 12 MUSDB18-HQ songs.
+
+**stemplayer:**
+- **Modal:** A10 with 4 CPUs and 8 GiB, `scaledown_window=60` and a CPU memory snapshot. A background warm-up runs after restore. Stems are stored at `STEM_GAIN = 0.5` and each reports its actual gain.
+- **Worker:**
+  - job records moved from KV to R2 (`stems/<taskId>/job.json`, ETag-conditional writes), because KV's per-location cache delayed status 7–50 s;
+  - `/api/status/<id>?since=` long-polls R2;
+  - `/api/wake` and `/api/warm` start the Modal API and a GPU early.
+- **Browser:** `AudioEngine` plays each stem at 1 / its gain, through a limiter that only acts above 0 dBFS.
+- **Results:**
+  - a warm job went from 18.4 s to 5–6 s, and separating alone from 5.47 s to 1.88 s;
+  - "ready" reached the browser ~0.25 s after the job finished, instead of 7–50 s;
+  - ~0.15–0.30¢ a song.
+- **Tried and dropped** (details in stemsep `results/deployed.md`):
+  - `torch.compile`, ONNX/TensorRT, GPU memory snapshots, VBR and custom LAME builds;
+  - R2 client tweaks, multipart stem uploads, link downloads on a CPU container (in Oracle's cloud, which YouTube refused);
+  - T4s, which cold-start in 17.5 s.
+
+## Tried and dropped (second pass)
+- **Retrying in the same region:** a fresh container in us-central often lands on the same refused IP. Two videos were refused 4 of 4 times.
+- **Preconnecting to the stem host:** stems take ~0.2 s to load after "ready".
+- **A Media Source Extensions player:** on iPhone (and Playwright's WebKit), MSE audio passed through `createMediaElementSource` reaches Web Audio as silence.
+- **A chunked POST from Modal to the relay:** Cloudflare's edge buffers the whole request body before the Worker runs. WebSocket ingest streams, at ~50 ms from Modal to the browser.
+- **One warm-up call after a deploy:** it only takes the snapshot for one kind of machine.
+
+## Open
+- **Uploads on slow connections:** the biggest remaining wait (see the table). Options: start separating while the file uploads (chunked presigned PUTs that the job reads as they land), or shrink WAV and FLAC in the browser before sending.
+- **Loud songs:** a stem that clips in its first stretch stops streaming, so the song gets no early start and plays from the files. Phase 5 of the plan (`StreamingMP3(stream_through_rescale=True)` in stemsep) fixes that.
+- **Rescaled-stem splice:** it downloads the whole stem rather than a Range from the current frame. Rare, and only costs bandwidth.
+- **Apify's cap:** $5 a month is ~60–80 refused songs. With the region stand-ins it should rarely run; check `modal app logs stem-demucs` for refusals.
+- **Real-user timing:** none is collected. Everything here was measured from one Mac with simulated networks.
+
+## Measuring
+- **No harness in the repo.** It was a Playwright script in a session scratchpad and is gone. To rebuild it, `stemsep/results/browser/README.md` has what it did. In short:
+  - pick a uniquely tagged copy of the song, so the stem cache never hits (`ffmpeg -c copy -metadata comment=<uuid>`);
+  - throttle with CDP `Network.emulateNetworkConditions`;
+  - count four `canplay` events on wrapped `Audio` elements, or for live playback, RMS on an analyser tapped off the limiter.
+- **Bench copy of the app:**
+  - Create a KV namespace, then patch a throwaway copy of `wrangler.jsonc`: `name`, the KV id, `MODAL_ENDPOINT` → `https://dawsonxiong--stem-demucs-<name>-separate-api.modal.run`, and `SEPARATIONS_PER_HOUR` → 1000.
+  - Deploy Modal with `modal deploy --name stem-demucs-<name> modal/app.py`.
+  - Copy the Worker secrets with `op run --no-masking --account my.1password.com --env-file=.env.op -- node -e '…print the three as JSON…' | wrangler secret bulk --name <worker>`. Without `--no-masking`, 1Password replaces the values with `<concealed by 1Password>`.
+- **Safari:** the iOS Simulator (iPhone 17 Pro, iOS 26.3) runs real Safari; open URLs with `simctl`.
 
 ## Gotchas
-- **Staging Modal:** test with `modal deploy --name stem-demucs-staging modal/app.py`, then stop the app afterwards. Merging to `main` deploys to production.
-- **Local Worker runs:** use `pnpm build`, then put a dummy `.dev.vars` in `dist/server/` and run `vite preview`.
-- **Bench apps:** don't use `from __future__ import annotations` with `modal.parameter`. The shared `images` module has to be shipped with `add_local_python_source`.
+- **Old containers after a Modal deploy.** For about a minute after a deploy, Modal keeps sending calls to containers still running the old code. A new argument must be optional on the receiving side, and only passed when it's needed. This caught `warm(hold=…)` and `fetch_link(url, youtube_id)`, and would have caught `separate(live=…)`.
+- **macOS has no `timeout`:** use `perl -e 'alarm N; exec @ARGV' cmd`.
+- **Wrangler:**
+  - `kv` commands use local storage unless given `--remote`.
+  - `wrangler delete <name>` takes the name as an argument, so run it outside the repo with `CLOUDFLARE_ACCOUNT_ID` set, or a slip deletes production.
+- **Staging Modal:** `modal deploy --name stem-demucs-staging modal/app.py`, then stop the app. Merging to `main` deploys production.
+- **Local Worker runs:** `pnpm build`, a dummy `.dev.vars` in `dist/server/`, then `vite preview`.
+- **Bench apps** (in stemsep): don't use `from __future__ import annotations` with `modal.parameter`. The shared `images` module has to be shipped with `add_local_python_source`.
