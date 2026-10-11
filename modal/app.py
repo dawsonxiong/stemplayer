@@ -1040,6 +1040,9 @@ def separate_api():
     from fastapi import FastAPI, Header, HTTPException
 
     web = FastAPI()
+    # Under the GPU's and fetch_link's 60 s scaledown, so a warm-up skipped as
+    # a repeat still finds the last one's containers up.
+    WARM_EVERY = 45
     last_warm = 0.0
     last_stand_in_warm = 0.0
     # FastAPI runs these handlers on a thread pool.
@@ -1059,20 +1062,21 @@ def separate_api():
     @web.post("/warm", status_code=202)
     def warm(youtube: bool = False, authorization: str = Header("")):
         """Called when someone picks a song, so a GPU container starts while
-        it uploads. At most once a minute: a container stays up a minute after
-        its last input, and a burst of picks shouldn't start a crowd.
+        it uploads. At most every WARM_EVERY seconds: a burst of picks
+        shouldn't start a crowd, and a container warmed that long ago is still
+        up, since containers stay a minute after their last input.
 
         With `youtube`, a song that downloads from YouTube, the downloaders in
-        other regions start too (also once a minute). When YouTube refuses the
+        other regions start too (as often). When YouTube refuses the
         first, a warm stand-in answers in ~1–3 s instead of ~5–7 s cold."""
         nonlocal last_warm, last_stand_in_warm
         authorized(authorization)
         with warm_lock:
             now = time.monotonic()
-            gpu = now - last_warm >= 60
+            gpu = now - last_warm >= WARM_EVERY
             if gpu:
                 last_warm = now
-            stand_ins = youtube and now - last_stand_in_warm >= 60
+            stand_ins = youtube and now - last_stand_in_warm >= WARM_EVERY
             if stand_ins:
                 last_stand_in_warm = now
         if gpu:

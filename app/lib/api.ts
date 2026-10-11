@@ -260,18 +260,20 @@ export async function fetchStemUrls(taskId: string) {
   return res.json() as Promise<StemsToLoad>;
 }
 
+const WARM_EVERY_MS = 45_000;
 let lastWarm = 0;
 let lastYouTubeWarm = 0;
 
 /** Starts a GPU for a song that's been picked but not yet split, so it's up
- *  sooner. Once a minute at most: a link field calls this as it's typed.
+ *  sooner. Every 45 s at most, as the Modal API does: a link field calls this
+ *  as it's typed, and a container stays up a minute after it's warmed.
  *  With `youtube`, a song that downloads from YouTube (a YouTube, Spotify or
  *  Apple Music link) also starts the downloaders that stand in when YouTube
  *  refuses the first. */
 export function warmGpu({ youtube = false } = {}): void {
   const now = Date.now();
-  const gpu = now - lastWarm >= 60_000;
-  const standIns = youtube && now - lastYouTubeWarm >= 60_000;
+  const gpu = now - lastWarm >= WARM_EVERY_MS;
+  const standIns = youtube && now - lastYouTubeWarm >= WARM_EVERY_MS;
   if (!gpu && !standIns) return;
   if (gpu) lastWarm = now;
   if (standIns) lastYouTubeWarm = now;
