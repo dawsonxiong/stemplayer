@@ -490,6 +490,17 @@ def _proxy_url(session: int) -> str:
     return f"{scheme}://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
 
 
+def _proxy_unusable(error) -> bool:
+    """Whether a session's error was the proxy provider turning us away (407:
+    a wrong login, or the plan's data used up) or its gateway being
+    unreachable, rather than one home address or YouTube failing."""
+    text = str(error)
+    return any(
+        sign in text
+        for sign in ("407", "Proxy Authentication Required", "Unable to connect to proxy")
+    )
+
+
 @app.function(
     region="us-central",
     secrets=[modal.Secret.from_name("stemplayer-proxy")],
@@ -500,13 +511,25 @@ def _proxy_url(session: int) -> str:
 def fetch_link_proxy(url: str) -> dict:
     """A refused YouTube link, through home addresses instead of Google's:
     what fetch_link returns, from whichever session gets the audio first.
-    Errors never carry the proxy's password, which is in its URL."""
+    Errors never carry the proxy's password, which is in its URL.
+
+    Without a usable proxy (PROXY_URL empty or malformed, the provider
+    refusing our login with a 407 as when the plan's data is used up, or its
+    gateway unreachable) it says so at once, and the song goes on to Apify."""
     import queue
     import random
     import threading
 
+    unavailable = {"error": YOUTUBE_REFUSED, "blocked": True, "cause": "proxy: unavailable"}
+    try:
+        _proxy_url(0)
+    except Exception:
+        return unavailable  # no proxy configured: nothing to try
+
     found: dict = {}
     done = threading.Event()
+    # The provider turned us away, not YouTube: every session would be too.
+    unusable = threading.Event()
     lock = threading.Lock()
     # Each attempt that ends without the audio says so here.
     ended: queue.Queue = queue.Queue()
@@ -535,6 +558,11 @@ def fetch_link_proxy(url: str) -> dict:
                 return  # this address was refused; another may not be
             except UserError as e:
                 if str(e) == DOWNLOAD_FAILED:
+                    if _proxy_unusable(e.__cause__):
+                        log("proxy unusable")
+                        unusable.set()
+                        ended.put(n)
+                        return
                     # yt-dlp says the same for a dropped connection or a
                     # timeout through this address as for a private video:
                     # another address may do.
@@ -593,7 +621,7 @@ def fetch_link_proxy(url: str) -> dict:
                     start()
                 spare_at = 0
             continue
-        if done.is_set():
+        if done.is_set() or unusable.is_set():
             break
         running -= 1
         if count < PROXY_MAX_SESSIONS:
@@ -603,6 +631,8 @@ def fetch_link_proxy(url: str) -> dict:
     with lock:
         if found:
             return dict(found)
+    if unusable.is_set():
+        return unavailable
     return {"error": YOUTUBE_REFUSED, "blocked": True, "cause": "proxy: no session got the audio"}
 
 
