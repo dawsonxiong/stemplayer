@@ -120,24 +120,26 @@
     scale: 0.98;
   }
 }
-/* The round transport buttons: play, loop, record. */
+/* The transport buttons: play, loop, record. */
 @utility btn-icon {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.25rem;
+  height: 2.25rem;
   border-radius: calc(infinity * 1px);
-  border: 1px solid var(--color-line);
-  background-color: var(--color-page);
+  /* No circle at rest, so loop and record sit quietly beside play; the
+     border is there for an active state's colour class (loop cyan, record
+     red) to draw. */
+  border: 1px solid transparent;
+  position: relative;
   transition-property: scale, border-color, background-color;
   transition-duration: 150ms;
-  /* Low weight, so an active button's colour class (loop cyan, record red)
-     keeps its border under the pointer. */
+  /* Low weight, so those colour classes still win under the pointer. */
   @media (hover: hover) {
     &:where(:hover:not(:disabled)) {
-      border-color: var(--color-line-strong);
+      background-color: var(--color-well);
     }
   }
   &:active {
@@ -147,6 +149,19 @@
     cursor: not-allowed;
     opacity: 0.4;
   }
+  /* A finger needs ~44 px whatever the button looks like: an invisible hit
+     area around it on touch screens. */
+  @media (pointer: coarse) {
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 2.75rem);
+      height: max(100%, 2.75rem);
+      translate: -50% -50%;
+    }
+  }
 }
 /* A square btn-secondary for an icon alone, as tall as the text buttons it
    sits beside: power and keyboard shortcuts. */
@@ -154,8 +169,11 @@
   align-self: stretch;
   padding-inline: 0.875rem;
 }
-/* Play: the control pressed most, so the one solid button in the transport. */
+/* Play: the control pressed most, so the one solid button in the transport,
+   and smaller than the others so it leads the bar without weighing it down. */
 @utility btn-icon-solid {
+  width: 1.75rem;
+  height: 1.75rem;
   border-color: var(--color-ink);
   background-color: var(--color-ink);
   color: var(--color-page);
