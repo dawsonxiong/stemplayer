@@ -266,10 +266,18 @@ class _Silent:
     def error(self, msg): pass
 
 
-def _download(url: str, tmpdir: str, proxy: str | None = None) -> dict:
+def _download(
+    url: str, tmpdir: str, proxy: str | None = None, stop=None
+) -> dict:
     """Fetch a page's best audio stream, through `proxy` if given. Returns
-    yt-dlp's info, with the file at info["requested_downloads"][0]["filepath"]."""
+    yt-dlp's info, with the file at info["requested_downloads"][0]["filepath"].
+    `stop`, a threading.Event, cancels a download under way once it's set
+    (raising yt_dlp.utils.DownloadCancelled)."""
     import yt_dlp
+
+    def cancel_when_stopped(_progress) -> None:
+        if stop is not None and stop.is_set():
+            raise yt_dlp.utils.DownloadCancelled("another session got it first")
 
     opts = {
         # A single file over HLS. SoundCloud offers both for most tracks, and
@@ -287,6 +295,7 @@ def _download(url: str, tmpdir: str, proxy: str | None = None) -> dict:
         # Through a proxy, yt-dlp prints nothing at all: its errors can carry
         # the proxy's URL, password and all.
         **({"proxy": proxy, "socket_timeout": 15, "logger": _Silent()} if proxy else {}),
+        **({"progress_hooks": [cancel_when_stopped]} if stop is not None else {}),
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -449,7 +458,10 @@ def fetch_link_eu(url: str | None) -> dict:
 # song's lookup and download come from the same one, as YouTube requires.
 # On 2026-10-12, 6 of 8 sessions downloaded a video YouTube refuses from
 # Oracle, in 4.2–6.5 s; one address was refused, one errored, and one took
-# 254 s. In production that day, half the addresses were refused, mostly
+# 254 s. Through a byte-counting proxy, a session costs its audio (4–6 MB)
+# plus ~200 KB, and a refused one ~200 KB; losers are stopped as soon as one
+# wins, which halved a race's data. In production that day, half the
+# addresses were refused, mostly
 # within 2–6 s. So two sessions run at a time, a failed one is replaced at
 # once (five in all at most), a spare joins at 15 s if both are just slow,
 # and 60 s is the limit.
@@ -511,7 +523,9 @@ def fetch_link_proxy(url: str) -> dict:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                info = _download(url, tmpdir, proxy=proxy)
+                # Stopped once another session has the audio: a loser left to
+                # finish downloaded the whole song again, on proxy data.
+                info = _download(url, tmpdir, proxy=proxy, stop=done)
                 path = info["requested_downloads"][0]["filepath"]
                 with open(path, "rb") as f:
                     data = f.read()
@@ -537,9 +551,9 @@ def fetch_link_proxy(url: str) -> dict:
                         ended.put(n)  # wake the loop: it's won
                 return
             except Exception as e:
-                log("error " + type(e).__name__)
+                log("stopped" if done.is_set() else "error " + type(e).__name__)
                 ended.put(n)
-                return  # this address failed; another may not
+                return  # this address failed, or lost; another may not
         log("ok")
         with lock:
             if not found:
