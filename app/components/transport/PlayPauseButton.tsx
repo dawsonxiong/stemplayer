@@ -31,12 +31,12 @@ export function PlayPauseButton({ audioEngine }: PlayPauseButtonProps) {
       aria-label={isPlaying ? "Pause" : "Play"}
     >
       {isPlaying ? (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <rect x="3" y="2" width="4" height="12" rx="1" />
           <rect x="9" y="2" width="4" height="12" rx="1" />
         </svg>
       ) : (
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
           <path d="M4 2.5v11l10-5.5z" />
         </svg>
       )}
