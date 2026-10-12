@@ -257,9 +257,18 @@ YOUTUBE_REFUSED = (
 )
 
 
-def _download(url: str, tmpdir: str) -> dict:
-    """Fetch a page's best audio stream. Returns yt-dlp's info, with the file
-    at info["requested_downloads"][0]["filepath"]."""
+class _Silent:
+    """A yt-dlp logger that says nothing."""
+
+    def debug(self, msg): pass
+    def info(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
+
+
+def _download(url: str, tmpdir: str, proxy: str | None = None) -> dict:
+    """Fetch a page's best audio stream, through `proxy` if given. Returns
+    yt-dlp's info, with the file at info["requested_downloads"][0]["filepath"]."""
     import yt_dlp
 
     opts = {
@@ -275,6 +284,9 @@ def _download(url: str, tmpdir: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        # Through a proxy, yt-dlp prints nothing at all: its errors can carry
+        # the proxy's URL, password and all.
+        **({"proxy": proxy, "socket_timeout": 15, "logger": _Silent()} if proxy else {}),
     }
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -430,6 +442,95 @@ def fetch_link_eu(url: str | None) -> dict:
     return _fetch_link(url)
 
 
+# The proxy in the Modal secret `stemplayer-proxy` (PROXY_URL), as
+# http://user:pass@host:port or the provider's host:port:user:pass.
+# IPFoxy's rotating residential pool, through its US gateway: a session
+# (`sessid-<n>` in the username) keeps one home address for a while, so a
+# song's lookup and download come from the same one, as YouTube requires.
+# On 2026-10-12, 6 of 8 sessions downloaded a video YouTube refuses from
+# Oracle, in 4.2–6.5 s; one address was refused, one errored, and one took
+# 254 s. So two sessions race, a third joins at 15 s, and 60 s is the limit.
+PROXY_SESSIONS = 2
+PROXY_THIRD_AFTER = 15
+PROXY_DEADLINE = 60
+
+
+def _proxy_url(session: int) -> str:
+    """PROXY_URL as a URL, with its own sticky session."""
+    import re
+    from urllib.parse import quote
+
+    raw = os.environ["PROXY_URL"].strip()
+    scheme = "http"
+    if "://" in raw:
+        scheme, raw = raw.split("://", 1)
+    if "@" in raw:
+        userinfo, hostport = raw.rsplit("@", 1)
+        user, password = userinfo.split(":", 1)
+        host, port = hostport.rsplit(":", 1)
+    else:
+        host, port, user, password = raw.split(":", 3)
+    user = re.sub(r"sessid-[0-9]+", f"sessid-{session}", user)
+    return f"{scheme}://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
+
+
+@app.function(
+    region="us-central",
+    secrets=[modal.Secret.from_name("stemplayer-proxy")],
+    **FETCH_FUNCTION,
+)
+def fetch_link_proxy(url: str) -> dict:
+    """A refused YouTube link, through home addresses instead of Google's:
+    what fetch_link returns, from whichever session gets the audio first.
+    Errors never carry the proxy's password, which is in its URL."""
+    import random
+    import threading
+
+    found: dict = {}
+    done = threading.Event()
+    lock = threading.Lock()
+
+    def attempt() -> None:
+        proxy = _proxy_url(random.randrange(10**9, 10**10))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            try:
+                info = _download(url, tmpdir, proxy=proxy)
+                path = info["requested_downloads"][0]["filepath"]
+                with open(path, "rb") as f:
+                    data = f.read()
+            except YouTubeBlocked:
+                return  # this address was refused; another may not be
+            except UserError as e:
+                # The song, not the address: too long, age-restricted. The
+                # first refusal never got far enough to say; say it now.
+                with lock:
+                    if not found:
+                        found.update(error=str(e), blocked=False, cause="proxy")
+                        done.set()
+                return
+            except Exception:
+                return  # this address failed; another may not
+        with lock:
+            if not found:
+                found.update(
+                    data=data,
+                    ext=os.path.splitext(path)[1],
+                    title=info.get("title"),
+                    duration=info.get("duration"),
+                )
+                done.set()
+
+    for _ in range(PROXY_SESSIONS):
+        threading.Thread(target=attempt, daemon=True).start()
+    if not done.wait(PROXY_THIRD_AFTER):
+        threading.Thread(target=attempt, daemon=True).start()
+        done.wait(PROXY_DEADLINE - PROXY_THIRD_AFTER)
+    with lock:
+        if found:
+            return dict(found)
+    return {"error": YOUTUBE_REFUSED, "blocked": True, "cause": "proxy: no session got the audio"}
+
+
 # Where a refused YouTube download is tried again, all at once, before
 # Apify. On 2026-10-10, with us-central refusing two videos on 2 of 3
 # containers, us-east and eu-west let 3 of 3 through and us-west 2 of 3. A
@@ -441,8 +542,9 @@ def _fetch(
     url: str, youtube_id: str | None, tmpdir: str
 ) -> tuple[str, str | None, float | None]:
     """Download a link's audio through fetch_link, retrying a YouTube refusal
-    in other regions and then through Apify. Returns its path, title and
-    length in seconds, when the site says."""
+    in other regions, then through home addresses (fetch_link_proxy), then
+    through Apify. Returns its path, title and length in seconds, when the
+    site says."""
     from concurrent.futures import as_completed
 
     got = fetch_link.remote(url)
@@ -462,6 +564,14 @@ def _fetch(
                 break
         # The others finish on their own; the song doesn't wait for them.
         pool.shutdown(wait=False, cancel_futures=True)
+    if got.get("blocked") and youtube_id:
+        try:
+            result = fetch_link_proxy.remote(url)
+        except Exception:
+            result = {}  # the proxy's trouble, not the song's: on to Apify
+        # The audio, or what's wrong with the song (too long, age-restricted).
+        if "data" in result or (result.get("error") and not result.get("blocked")):
+            got = result
     if got.get("blocked") and youtube_id:
         info = _download_via_apify(youtube_id, tmpdir)
         return info["requested_downloads"][0]["filepath"], info.get("title"), None
