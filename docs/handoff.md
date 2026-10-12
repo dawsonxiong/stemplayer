@@ -10,7 +10,7 @@ Everything below is merged into `main` and deployed by CI.
   - songs play while they separate (live playback), which is on in production.
 
 Other places:
-- **stemsep** (`dawsonxiong/stemsep`, private): the separation engine and every benchmark. It's vendored at `modal/stemsep/`; change it there and run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Never edit the vendored copy. Its README's "Fourth pass" covers the browser measurements behind this pass.
+- **stemsep** (`dawsonxiong/stemsep`): the separation engine and every benchmark. It's vendored at `modal/stemsep/`; change it there and run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Never edit the vendored copy. Its README's "Fourth pass" covers the browser measurements behind this pass.
 - **Plans:** `docs/plans/progressive-playback.md` is the live playback plan and its phase-0 probe results. Phase 5 is still open.
 - **Leftover branches:**
   - `dawson/fetch-on-cpu` on GitHub: a dropped experiment, safe to delete.

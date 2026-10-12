@@ -17,6 +17,8 @@ Kanye's Stem Player, right in the browser. Upload a song, it gets split into ste
 
 The browser uploads the song straight to Cloudflare R2 with a presigned URL. A Worker then starts a Modal job, which runs Demucs on a GPU and sends the four stems back to a webhook. Job status is kept in R2 next to the stems, and the page polls it until they're ready. After that, playback and mixing happen client-side with the Web Audio API.
 
+Separation runs through [stemsep](https://github.com/dawsonxiong/stemsep), a faster runner for Demucs's `htdemucs` model. It uses the same model and weights at about a third of the GPU time: a 4-minute song takes 7.9 s on an A10, down from 18.4 s.
+
 ## Stack
 
 vinext (Next.js App Router on Vite), Cloudflare Workers, R2, Workers KV, Modal, Demucs, Three.js, React Three Fiber, Web Audio, Zustand, Tailwind v4.
