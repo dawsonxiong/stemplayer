@@ -6,16 +6,18 @@ import { usePlayerStore, type Source, type Stage } from "~/lib/store";
  *  doesn't read as a stall. */
 type Step = { id: Stage; label: string; done: string; estimate: string };
 
-// From the Modal job: an A10 that idles for a minute after a run, and is
-// started when a song is picked, so a cold start only some of the time, then
-// ~5 s to separate, encode and store a 4-minute song.
+// Measured in the browser (2026-10, stemsep results/browser/). The GPU starts
+// when a song is picked, so it reports in ~1–5 s after Split, warm or cold
+// (15–18 s only just after a deploy). Then ~5 s to separate, encode and
+// store a 4-minute song, ~0.3 s to load the stems, and 1.5–5 s to download
+// a link's audio, up to ~10 s when YouTube refuses the first try.
 const ESTIMATE = {
   upload: "~5\u00a0s",
-  start: "up to 30\u00a0s",
-  separate: "~8\u00a0s",
-  load: "~5\u00a0s",
-  lookup: "~2\u00a0s",
-  fetch: "~15\u00a0s",
+  start: "~5\u00a0s",
+  separate: "~5\u00a0s",
+  load: "~1\u00a0s",
+  lookup: "~1\u00a0s",
+  fetch: "~5\u00a0s",
 };
 
 const UPLOAD_STEPS: Step[] = [
