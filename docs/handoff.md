@@ -1,4 +1,4 @@
-# Handoff: performance work (2026-10-08 to 2026-10-11)
+# Handoff: performance work (2026-10-08 to 2026-10-12)
 
 ## Where things stand
 Everything below is merged into `main` and deployed by CI.
@@ -8,13 +8,20 @@ Everything below is merged into `main` and deployed by CI.
   - uploads start when a song is picked;
   - links download on Google Cloud;
   - songs play while they separate (live playback), which is on in production.
+- **Third pass** (#18–#23): YouTube refusals and the processing steps.
+  - Pasting a YouTube link warms the downloaders in other regions.
+  - A weekly workflow proposes yt-dlp bumps.
+  - A residential proxy sits between the regions and Apify. It's out of data and won't be topped up for now; see "Open".
+  - The processing steps show measured times; the GPU start is ~5 s, not "up to 30 s".
+- **Real users, 2026-10-12:** 4 link splits, 2 with live playback. One video (`UGTHKx15WXA`) was refused and a stand-in region got it in 5.2 s, with no Apify. No crashes and no live-playback errors.
 
 Other places:
 - **stemsep** (`dawsonxiong/stemsep`): the separation engine and every benchmark. It's vendored at `modal/stemsep/`; change it there and run its `scripts/vendor.sh ../stemplayer/modal/stemsep`. Never edit the vendored copy. Its README's "Fourth pass" covers the browser measurements behind this pass.
 - **Plans:** `docs/plans/progressive-playback.md` is the live playback plan and its phase-0 probe results. Phase 5 is still open.
-- **Leftover branches:**
+- **Leftover branches:** every other branch on GitHub belongs to a merged PR, and those are safe to delete.
   - `dawson/fetch-on-cpu` on GitHub: a dropped experiment, safe to delete.
-  - `dawson/transport-buttons`, local only: the owner's unfinished quieter-transport-button styling, not pushed.
+  - `claude/wonderwall-upload-loading-94tnwo` on GitHub: from another session, not this work.
+  - `dawson/transport-buttons`, local only: the owner's quieter transport buttons, not reviewed or pushed. Smaller icon buttons (2.5 → 2.25 rem), no outline at rest with a soft fill on hover, and a tighter transport bar.
 - **No test infrastructure is running.** The bench Workers, their KV namespaces and Modal apps, and the live-playback probe were all deleted. "Measuring" below says how to bring a bench back.
 
 ## What a split takes now
@@ -120,15 +127,33 @@ Split → all four stems playable in the browser. Medians unless noted; all from
   - **Per address, all or nothing:** on 24 Google Cloud containers, a refused IP was refused for all 5 gated videos and an accepted one for none. us-central, us-west and eu-west let 12 of 12 through, us-east 2 of 4, Tokyo and Singapore 0 of 8.
   - **What doesn't help:** the newest yt-dlp made no difference, Modal containers have no IPv6, and PO tokens no longer get past the check according to their maintainers.
   - **What's done:** the stand-ins are now warmed when a YouTube link is pasted (2.5 s instead of 6 s), and a weekly workflow proposes yt-dlp bumps. It opens an issue instead of a PR until the repo allows Actions to create PRs.
-  - **Residential proxy, since 2026-10-12:** IPFoxy's rotating residential pool, $1.99/GB. It's the step between the region stand-ins and Apify (`fetch_link_proxy`).
-    - **Through `gate-us`:** 6 of 8 sessions downloaded a refused video in 4.2–6.5 s; one home address was refused, one errored, and one took 254 s. Two sessions race, a third joins at 15 s, and 60 s is the limit.
-    - **Through `gate-sg`:** ~15 s a song.
-    - **Apify** now only runs if the proxy fails too.
+  - **Residential proxy** (#19–#23): IPFoxy's rotating residential pool, $1.99/GB, in the Modal secret `stemplayer-proxy` (`PROXY_URL`). It's the step between the region stand-ins and Apify (`fetch_link_proxy`).
+    - **Out of data now, and the owner isn't topping it up for now.** The 200 MB trial went on testing. IPFoxy answers 407 when there's no data.
+    - **Working as intended without it:** the proxy step sees the 407 and gives up at ~2 s, and the song goes on to Apify. Staging, with every region refused: proxy unusable at 1.9 s, Apify had the song at 98.8 s.
+    - **To turn it off entirely:** set `PROXY_URL` empty (0.0 s). Don't delete the secret: a missing one fails the Modal deploy.
+    - **To bring it back:** buy data on the same IPFoxy account; nothing else changes. Prefer `gate-us.ipfoxy.io` (~5 s a song) over `gate-sg` (~15 s).
+    - **How it races:**
+      - two sticky sessions, each on a different home address, with a failed one replaced at once (5 at most);
+      - a spare at 15 s if both are just slow, and 60 s at most;
+      - losers stop as soon as one has the audio;
+      - a song-level error (too long, live, age-restricted) ends it at once.
+    - **Measured through `gate-us`:**
+      - 6 of 8 sessions downloaded a refused video in 4.2–6.5 s; one address was refused, one errored, and one took 254 s.
+      - In production, about half the addresses were refused.
+      - Each session costs its audio plus ~200 KB, and a refused one ~200 KB, so ~5–7 MB a refused song (~1¢).
+    - **Never log the proxy URL:** it holds the password. yt-dlp is silenced through the proxy, and attempts log only `{"proxy_attempt", "outcome", "s"}`.
   - Raw rows are in stemsep `results/youtube-refusals.jsonl`.
-- **Real-user timing:** none is collected. Everything here was measured from one Mac with simulated networks.
+- **Real-user timing:** none is collected. Everything here was measured from one Mac with simulated networks; Modal's job log (`timings`, `live_first_data`, `proxy_attempt`) is the only view of real use.
+- **KV fallback, from 2026-10-22:** `getJob` and `updateJob` (`app/lib/jobs.server.ts`) still read KV for job records from before they moved to R2 on 2026-10-08. Those songs' stems expire 14 days after splitting, so after 10-22 the fallback is dead code and can go.
+- **yt-dlp bumps arrive as issues,** not PRs, until "Allow GitHub Actions to create and approve pull requests" is turned on in the repo's Actions settings.
 
 ## Measuring
-- **No harness in the repo.** It was a Playwright script in a session scratchpad and is gone. To rebuild it, `stemsep/results/browser/README.md` has what it did. In short:
+- **The harness is in stemsep's `bench/browser/`, not this repo:**
+  - `run.mjs` and `matrix.sh` time splits under simulated conditions;
+  - `live.mjs` measures live playback;
+  - `refusal_probe.py` probes YouTube refusals by region.
+
+  `stemsep/results/browser/README.md` explains them. Their bench URLs point at deleted Workers, so redeploy a bench first. In short:
   - pick a uniquely tagged copy of the song, so the stem cache never hits (`ffmpeg -c copy -metadata comment=<uuid>`);
   - throttle with CDP `Network.emulateNetworkConditions`;
   - count four `canplay` events on wrapped `Audio` elements, or for live playback, RMS on an analyser tapped off the limiter.
