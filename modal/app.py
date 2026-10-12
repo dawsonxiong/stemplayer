@@ -449,9 +449,13 @@ def fetch_link_eu(url: str | None) -> dict:
 # song's lookup and download come from the same one, as YouTube requires.
 # On 2026-10-12, 6 of 8 sessions downloaded a video YouTube refuses from
 # Oracle, in 4.2–6.5 s; one address was refused, one errored, and one took
-# 254 s. So two sessions race, a third joins at 15 s, and 60 s is the limit.
+# 254 s. In production that day, half the addresses were refused, mostly
+# within 2–6 s. So two sessions run at a time, a failed one is replaced at
+# once (five in all at most), a spare joins at 15 s if both are just slow,
+# and 60 s is the limit.
 PROXY_SESSIONS = 2
-PROXY_THIRD_AFTER = 15
+PROXY_MAX_SESSIONS = 5
+PROXY_SPARE_AFTER = 15
 PROXY_DEADLINE = 60
 
 
@@ -485,12 +489,15 @@ def fetch_link_proxy(url: str) -> dict:
     """A refused YouTube link, through home addresses instead of Google's:
     what fetch_link returns, from whichever session gets the audio first.
     Errors never carry the proxy's password, which is in its URL."""
+    import queue
     import random
     import threading
 
     found: dict = {}
     done = threading.Event()
     lock = threading.Lock()
+    # Each attempt that ends without the audio says so here.
+    ended: queue.Queue = queue.Queue()
 
     started = time.perf_counter()
 
@@ -510,6 +517,7 @@ def fetch_link_proxy(url: str) -> dict:
                     data = f.read()
             except YouTubeBlocked:
                 log("refused")
+                ended.put(n)
                 return  # this address was refused; another may not be
             except UserError as e:
                 if str(e) == DOWNLOAD_FAILED:
@@ -517,6 +525,7 @@ def fetch_link_proxy(url: str) -> dict:
                     # timeout through this address as for a private video:
                     # another address may do.
                     log("failed")
+                    ended.put(n)
                     return
                 # The song, not the address: too long, live, age-restricted.
                 # The first refusal never got far enough to say; say it now.
@@ -525,9 +534,11 @@ def fetch_link_proxy(url: str) -> dict:
                     if not found:
                         found.update(error=str(e), blocked=False, cause="proxy")
                         done.set()
+                        ended.put(n)  # wake the loop: it's won
                 return
             except Exception as e:
                 log("error " + type(e).__name__)
+                ended.put(n)
                 return  # this address failed; another may not
         log("ok")
         with lock:
@@ -539,12 +550,42 @@ def fetch_link_proxy(url: str) -> dict:
                     duration=info.get("duration"),
                 )
                 done.set()
+                ended.put(n)  # wake the loop: it's won
 
-    for n in range(PROXY_SESSIONS):
-        threading.Thread(target=attempt, args=(n,), daemon=True).start()
-    if not done.wait(PROXY_THIRD_AFTER):
-        threading.Thread(target=attempt, args=(PROXY_SESSIONS,), daemon=True).start()
-        done.wait(PROXY_DEADLINE - PROXY_THIRD_AFTER)
+    count = 0
+    running = 0
+
+    def start() -> None:
+        nonlocal count, running
+        threading.Thread(target=attempt, args=(count,), daemon=True).start()
+        count += 1
+        running += 1
+
+    for _ in range(PROXY_SESSIONS):
+        start()
+    spare_at = started + PROXY_SPARE_AFTER
+    deadline = started + PROXY_DEADLINE
+    while not done.is_set():
+        now = time.perf_counter()
+        if now >= deadline:
+            break
+        wake = min(deadline, spare_at) if spare_at else deadline
+        try:
+            ended.get(timeout=max(0.05, wake - now))
+        except queue.Empty:
+            # Both still going and slow: one more beside them, once.
+            if spare_at and time.perf_counter() >= spare_at:
+                if count < PROXY_MAX_SESSIONS:
+                    start()
+                spare_at = 0
+            continue
+        if done.is_set():
+            break
+        running -= 1
+        if count < PROXY_MAX_SESSIONS:
+            start()  # a dead address: another in its place, at once
+        elif running == 0:
+            break  # every session tried and none got it
     with lock:
         if found:
             return dict(found)
