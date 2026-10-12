@@ -477,7 +477,9 @@ def _proxy_url(session: int) -> str:
 @app.function(
     region="us-central",
     secrets=[modal.Secret.from_name("stemplayer-proxy")],
-    **FETCH_FUNCTION,
+    # Its sessions run at once, and each solves YouTube's JavaScript
+    # challenge: on one core they held each other up.
+    **{**FETCH_FUNCTION, "cpu": 2.0},
 )
 def fetch_link_proxy(url: str) -> dict:
     """A refused YouTube link, through home addresses instead of Google's:
@@ -490,8 +492,16 @@ def fetch_link_proxy(url: str) -> dict:
     done = threading.Event()
     lock = threading.Lock()
 
-    def attempt() -> None:
+    started = time.perf_counter()
+
+    def attempt(n: int) -> None:
         proxy = _proxy_url(random.randrange(10**9, 10**10))
+
+        def log(outcome: str) -> None:
+            # The outcome only: never the proxy, whose URL holds the password.
+            print(json.dumps({"proxy_attempt": n, "outcome": outcome,
+                              "s": round(time.perf_counter() - started, 1)}))
+
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
                 info = _download(url, tmpdir, proxy=proxy)
@@ -499,17 +509,27 @@ def fetch_link_proxy(url: str) -> dict:
                 with open(path, "rb") as f:
                     data = f.read()
             except YouTubeBlocked:
+                log("refused")
                 return  # this address was refused; another may not be
             except UserError as e:
-                # The song, not the address: too long, age-restricted. The
-                # first refusal never got far enough to say; say it now.
+                if str(e) == DOWNLOAD_FAILED:
+                    # yt-dlp says the same for a dropped connection or a
+                    # timeout through this address as for a private video:
+                    # another address may do.
+                    log("failed")
+                    return
+                # The song, not the address: too long, live, age-restricted.
+                # The first refusal never got far enough to say; say it now.
+                log("song error")
                 with lock:
                     if not found:
                         found.update(error=str(e), blocked=False, cause="proxy")
                         done.set()
                 return
-            except Exception:
+            except Exception as e:
+                log("error " + type(e).__name__)
                 return  # this address failed; another may not
+        log("ok")
         with lock:
             if not found:
                 found.update(
@@ -520,10 +540,10 @@ def fetch_link_proxy(url: str) -> dict:
                 )
                 done.set()
 
-    for _ in range(PROXY_SESSIONS):
-        threading.Thread(target=attempt, daemon=True).start()
+    for n in range(PROXY_SESSIONS):
+        threading.Thread(target=attempt, args=(n,), daemon=True).start()
     if not done.wait(PROXY_THIRD_AFTER):
-        threading.Thread(target=attempt, daemon=True).start()
+        threading.Thread(target=attempt, args=(PROXY_SESSIONS,), daemon=True).start()
         done.wait(PROXY_DEADLINE - PROXY_THIRD_AFTER)
     with lock:
         if found:
