@@ -2,6 +2,8 @@
 
 Kanye's Stem Player, right in the browser. Upload a song, it gets split into stems, and you mix them on a 3D model of the device.
 
+Live at [stemplayer.dawsonxiong.workers.dev](https://stemplayer.dawsonxiong.workers.dev).
+
 ![Stem Player web app with a 3D render of the tan device, its four LED grooves lit, above an upload zone](docs/screenshots/device.webp)
 
 ## Features
