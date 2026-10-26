@@ -93,21 +93,32 @@ async function resolveSoundCloud(path: string): Promise<ResolvedLink> {
 }
 
 async function resolveApple(id: string, storefront: string): Promise<ResolvedLink> {
-  const res = await fetch(`https://itunes.apple.com/lookup?id=${id}&country=${storefront}`).catch(
-    () => null,
-  );
-  if (!res?.ok) throw new Error(`iTunes lookup failed (${res?.status ?? "network"})`);
-  const { results } = await json<{
-    results?: {
-      kind?: string;
-      trackName?: string;
-      artistName?: string;
-      trackTimeMillis?: number;
-    }[];
-  }>(res);
-  const song = results?.find((r) => r.kind === "song");
-  if (!song?.trackName || !song.artistName || !song.trackTimeMillis) throw new LinkError(NOT_FOUND);
-  return matched("apple", id, song.artistName, song.trackName, song.trackTimeMillis);
+  // The iTunes lookup API answers 403 to Cloudflare's addresses, so this reads
+  // the song's own page, which carries schema.org data for search engines: a
+  // MusicComposition whose `audio` is the recording, with its artist and
+  // length. An unknown ID, or one for an album, is a 404.
+  const res = await fetch(`https://music.apple.com/${storefront}/song/${id}`).catch(() => null);
+  if (res?.status === 404) throw new LinkError(NOT_FOUND);
+  if (!res?.ok) throw new Error(`Apple Music page failed (${res?.status ?? "network"})`);
+  const html = await res.text();
+  const raw = html.match(/<script[^>]*application\/ld\+json[^>]*>(.*?)<\/script>/s)?.[1];
+  type Recording = { name?: string; duration?: string; byArtist?: { name?: string }[] };
+  const recording = raw ? (JSON.parse(raw) as { audio?: Recording }).audio : undefined;
+  const artist = recording?.byArtist?.[0]?.name;
+  const durationMs = isoDurationMs(recording?.duration);
+  if (!recording?.name || !artist || !durationMs) {
+    throw new Error("Apple Music page changed: no song name, artist or duration");
+  }
+  return matched("apple", id, artist, recording.name, durationMs);
+}
+
+/** "PT4M11S" in milliseconds, or null if it isn't a duration like that. */
+function isoDurationMs(value: string | undefined): number | null {
+  const parts = value?.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/);
+  if (!parts) return null;
+  const [, hours = "0", minutes = "0", seconds = "0"] = parts;
+  const ms = ((Number(hours) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1000;
+  return ms > 0 ? ms : null;
 }
 
 async function resolveSpotify(id: string): Promise<ResolvedLink> {
