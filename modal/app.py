@@ -29,8 +29,8 @@ demucs_image = (
         # yt-dlp needs a JavaScript runtime to solve YouTube's challenges. The
         # [default] extra brings the solver scripts, and deno, its default
         # runtime, comes as a wheel with the binary on PATH.
-        "yt-dlp[default]==2026.8.19",
-        "deno==2.9.7",
+        "yt-dlp[default]==2026.10.21",
+        "deno==2.9.8",
     )
     # Pre-download model weights into the image
     .run_commands(
@@ -44,7 +44,7 @@ fetch_image = (
     modal.Image.debian_slim(python_version="3.11")
     # yt-dlp fixes up HLS AAC downloads with it.
     .apt_install("ffmpeg")
-    .pip_install("requests==2.34.2", "yt-dlp[default]==2026.8.19", "deno==2.9.7")
+    .pip_install("requests==2.34.2", "yt-dlp[default]==2026.10.21", "deno==2.9.8")
 )
 
 api_image = modal.Image.debian_slim(python_version="3.11").pip_install(
